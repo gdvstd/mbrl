@@ -1,0 +1,22 @@
+# experiment outputs (GBs of checkpoints/curves -- regenerate via scripts)
+runs/
+vla/runs_vla/
+*.log
+nohup.out
+
+# environments & external clones
+venv/
+vla/venv/
+vla/LIBERO/
+third_party/
+__pycache__/
+*.pyc
+
+# large binaries
+*.pt
+*.zip
+*.hdf5
+*.npz
+
+# OS noise
+.DS_Store

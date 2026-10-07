@@ -9,7 +9,7 @@
 # simplification). Launch detached so it survives the terminal:
 #   nohup caffeinate -is ./run_grid_experiments.sh > runs/logs/driver.log 2>&1 &
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 PY=./venv/bin/python
 LOGDIR=runs/logs
 mkdir -p "$LOGDIR"
@@ -20,7 +20,7 @@ add() { CMDS+=("$1"); }
 
 student() {  # method, seed, extra args..., logname
     local m="$1" s="$2" log="$3"; shift 3
-    add "$PY train_grid_student.py --size 6 --transfer $m --seed $s $* \
+    add "$PY minigrid6/train_grid_student.py --size 6 --transfer $m --seed $s $* \
         > $LOGDIR/${log}_s${s}.log 2>&1"
 }
 

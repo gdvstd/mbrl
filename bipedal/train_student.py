@@ -20,11 +20,15 @@ For a fair comparison, keep --timesteps, --seed, --eval-freq and
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
-from sac_common import ENV_IDS, SAC_HYPERPARAMS, make_callbacks, make_env
-from transfer import TRANSFER_METHODS, get_transfer
+from bipedal.sac_common import ENV_IDS, SAC_HYPERPARAMS, make_callbacks, make_env
+from bipedal.transfer import TRANSFER_METHODS, get_transfer
 
 STUDENT_ENV = ENV_IDS["hardcore"]
 

@@ -56,8 +56,7 @@ def main() -> None:
         load_teacher_into(model, a.teacher)
         print(f"[vla-student] initialized from BC teacher: {a.teacher}")
     elif a.transfer in ("aa", "jsrl"):
-        sys.path.insert(0, "/Users/namsehyeon/Desktop/Purdue/CS49000/MBRL")
-        from grid_strategies import AAStrategy, JSRLStrategy
+        from strategies import AAStrategy, JSRLStrategy
         from vla_mixed_ppo import MixedPolicyVLAPPO
 
         teacher = FrozenBCTeacher(a.teacher, device=a.device)

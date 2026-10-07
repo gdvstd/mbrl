@@ -6,6 +6,19 @@ reproducing **EBTL** (Energy-Based Transfer for Reinforcement Learning,
 (Fine-Tuning, Action Advising, JSRL, Kickstarting), then extending the
 question toward VLA-based manipulation.
 
+```
+bipedal/    Track 1 - SAC / BipedalWalker
+minigrid6/  Track 2 - MiniGrid 6x6 surrogate pair
+fourroom/   Track 3 - paper-faithful 11x11 four-room (main)
+vla/        Track 4 - VLA / LIBERO (self-contained for cluster deploys)
+shared/     strategies & callbacks used by multiple tracks
+runs/       experiment outputs (git-ignored)
+```
+
+Entry points run from the repo root either way:
+`python fourroom/train_paper_student.py ...` or
+`python -m fourroom.train_paper_student ...`.
+
 The repo contains four experiment tracks, in the order they were built.
 Each track's design decisions, pitfalls, and results are documented in the
 module docstrings of its files.
@@ -14,11 +27,11 @@ module docstrings of its files.
 
 Teacher `BipedalWalker-v3` → student `BipedalWalkerHardcore-v3`.
 
-- `sac_common.py` — shared SAC config (single source of truth)
-- `train_teacher.py` / `train_student.py` — training entry points
-- `transfer.py` — pluggable transfer seam (`--transfer none|weight_init|jsrl|reward_shaping|ksrl`)
-- `jsrl.py`, `kickstarting.py`, `reward_shaping.py` — method implementations
-- `compare_runs.py`, `watch_policy.py`, `watch_latest.py`, `explore_bipedal.py` — tooling
+- `bipedal/sac_common.py` — shared SAC config (single source of truth)
+- `bipedal/train_teacher.py` / `bipedal/train_student.py` — training entry points
+- `bipedal/transfer.py` — pluggable transfer seam (`--transfer none|weight_init|jsrl|reward_shaping|ksrl`)
+- `bipedal/jsrl.py`, `bipedal/kickstarting.py`, `bipedal/reward_shaping.py` — method implementations
+- `bipedal/compare_runs.py`, `bipedal/watch_policy.py`, `bipedal/watch_latest.py`, `bipedal/explore_bipedal.py` — tooling
 
 Finding: weight-init transfer dominates; teacher-in-the-loop methods are
 limited because the flat-terrain teacher is OOD on hardcore obstacles —
@@ -29,19 +42,19 @@ the covariate-shift problem EBTL targets.
 Teacher `MiniGrid-Empty-6x6` → student `MiniGrid-DoorKey-6x6` (SB3 PPO,
 7x7 egocentric partial obs).
 
-- `grid_common.py` — env ids, CNN, PPO config (note the hard-won gotchas
+- `minigrid6/grid_common.py` — env ids, CNN, PPO config (note the hard-won gotchas
   in the comments: `normalize_images=False`, `ent_coef=0.05`)
-- `train_grid_teacher.py` / `train_grid_student.py`
+- `minigrid6/train_grid_teacher.py` / `minigrid6/train_grid_student.py`
   (`--transfer scratch|finetune|aa|jsrl|ksrl|ebtl`)
-- `grid_mixed_ppo.py` — mixed teacher/student rollouts with the behavior
+- `minigrid6/grid_mixed_ppo.py` — mixed teacher/student rollouts with the behavior
   log-prob stored (EBTL Eq. 3 off-policy correction via PPO's own ratio)
-- `grid_strategies.py` — AA / JSRL / EBTL guidance masks
-- `grid_ksrl.py` — Kickstarting (exact discrete cross-entropy)
-- `grid_teacher.py` — frozen teacher + energy threshold calibration
+- `shared/strategies.py` — AA / JSRL / EBTL guidance masks (shared across tracks)
+- `minigrid6/grid_ksrl.py` — Kickstarting (exact discrete cross-entropy)
+- `minigrid6/grid_teacher.py` — frozen teacher + energy threshold calibration
   (energy MUST use raw `action_net` logits; torch's `Categorical.logits`
   are normalized and give logsumexp == 0)
-- `grid_energy_reg.py` — teacher energy regularization (margin loss)
-- `run_grid_experiments.sh`, `watch_grid.py` (GIF/live rollouts)
+- `minigrid6/grid_energy_reg.py` — teacher energy regularization (margin loss)
+- `minigrid6/run_grid_experiments.sh`, `minigrid6/watch_grid.py` (GIF/live rollouts)
 
 Finding: EBTL is the only guidance method that never hurts (3/3 seeds),
 but this surrogate pair has no true shared ID region, which energy
@@ -54,17 +67,17 @@ The paper's actual GridWorld, reconstructed from Fig. 2a + Appendix A/B:
 (exactly 1), action masking, MaskablePPO with the paper's Table-3
 hyperparameters and Fig-8a architecture (25.7K params).
 
-- `fourroom_env.py` — AltGoal & Locked scenarios (+ `--ego` egocentric
+- `fourroom/fourroom_env.py` — AltGoal & Locked scenarios (+ `--ego` egocentric
   variant with occlusion)
-- `paper_common.py` — wrappers, hyperparams, extractor, frozen teacher,
+- `fourroom/paper_common.py` — wrappers, hyperparams, extractor, frozen teacher,
   tau calibration
-- `paper_mixed_ppo.py` / `paper_ksrl.py` / `paper_energy_reg.py` — ports
+- `fourroom/paper_mixed_ppo.py` / `fourroom/paper_ksrl.py` / `fourroom/paper_energy_reg.py` — ports
   onto sb3-contrib MaskablePPO
-- `train_paper_teacher.py` / `train_paper_student.py` (`--scenario`,
+- `fourroom/train_paper_teacher.py` / `fourroom/train_paper_student.py` (`--scenario`,
   `--transfer`, `--ego`)
-- `run_paper_experiments.sh`, `run_paper_ego.sh`, `run_paper_ft_full.sh`
-- `viz_energy_paper.py` — Fig-5b-style advice-rate heatmaps + state
-  montages; `calib_scratch.py` — No-Transfer calibration probes
+- `fourroom/run_paper_experiments.sh`, `fourroom/run_paper_ego.sh`, `fourroom/run_paper_ft_full.sh`
+- `fourroom/viz_energy_paper.py` — Fig-5b-style advice-rate heatmaps + state
+  montages; `fourroom/calib_scratch.py` — No-Transfer calibration probes
 
 Findings (3 seeds): the paper's ordering holds —
 frozen-conv Fine-Tuning plateaus < Action Advising < EBTL (fastest

@@ -15,6 +15,10 @@ Ctrl+C to stop.
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import glob
 import os
@@ -24,7 +28,7 @@ import time
 import gymnasium as gym
 from stable_baselines3 import SAC
 
-from sac_common import ENV_IDS
+from bipedal.sac_common import ENV_IDS
 
 
 def _ckpt_steps(path: str) -> int:

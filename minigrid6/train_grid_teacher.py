@@ -13,17 +13,21 @@ eval/ / tb/ / monitor csvs
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
-from grid_common import (
+from minigrid6.grid_common import (
     GRID_SOLVED_REWARD,
     N_ENVS,
     build_ppo,
     grid_env_id,
     make_grid_vec_env,
 )
-from sac_common import make_callbacks
+from shared.callbacks import make_callbacks
 
 
 def main() -> None:
@@ -73,7 +77,7 @@ def main() -> None:
     )
 
     if args.energy_reg:
-        from grid_energy_reg import EnergyRegPPO, collect_random_states
+        from minigrid6.grid_energy_reg import EnergyRegPPO, collect_random_states
 
         ood_env = grid_env_id("doorkey", args.size)
         print(f"[grid-teacher] collecting OOD states from random {ood_env} rollouts")

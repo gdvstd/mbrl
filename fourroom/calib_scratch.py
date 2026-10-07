@@ -1,3 +1,5 @@
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 """Calibration probe: scratch MaskablePPO on a target env variant.
 
 Goal: find the paper-unspecified env parameters (max_steps, start rooms)
@@ -5,9 +7,9 @@ under which No-Transfer's curve matches the paper's (altgoal solved <200K,
 locked solved <1M). Only scratch is run; methods are compared later.
 """
 import argparse, os
-from paper_common import (N_ENVS, build_mppo, make_paper_callbacks,
+from fourroom.paper_common import (N_ENVS, build_mppo, make_paper_callbacks,
                           make_paper_vec_env)
-from fourroom_env import SCENARIOS
+from fourroom.fourroom_env import SCENARIOS
 
 p = argparse.ArgumentParser()
 p.add_argument("--scenario", required=True)

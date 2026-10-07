@@ -30,8 +30,8 @@ def collect_random_states_masked(env_id: str, n_episodes: int = 100,
     import gymnasium as gym
     from stable_baselines3.common.vec_env import (
         DummyVecEnv, VecTransposeImage)
-    from paper_common import _wrap
-    from fourroom_env import action_mask
+    from fourroom.paper_common import _wrap
+    from fourroom.fourroom_env import action_mask
 
     env_kwargs = dict(env_kwargs or {})
     if ego:

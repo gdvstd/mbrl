@@ -12,11 +12,15 @@ Usage:
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
-from fourroom_env import SCENARIOS
-from paper_common import (
+from fourroom.fourroom_env import SCENARIOS
+from fourroom.paper_common import (
     N_ENVS,
     build_mppo,
     make_paper_callbacks,
@@ -60,7 +64,7 @@ def main() -> None:
         monitor_dir=os.path.join(outdir, "eval", "eval_monitor"), ego=args.ego)
 
     if args.energy_reg:
-        from paper_energy_reg import (
+        from fourroom.paper_energy_reg import (
             EnergyRegMaskablePPO,
             collect_random_states_masked,
         )

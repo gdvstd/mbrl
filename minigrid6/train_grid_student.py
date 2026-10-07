@@ -25,18 +25,22 @@ eval/ / tb/ / monitor csvs
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
 from stable_baselines3 import PPO
 
-from grid_common import (
+from minigrid6.grid_common import (
     N_ENVS,
     build_ppo,
     grid_env_id,
     make_grid_vec_env,
 )
-from sac_common import make_callbacks
+from shared.callbacks import make_callbacks
 
 
 def main() -> None:
@@ -130,9 +134,9 @@ def main() -> None:
             print("[grid-student] froze CNN feature extractor")
         print(f"[grid-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl"):
-        from grid_mixed_ppo import MixedPolicyPPO
-        from grid_strategies import AAStrategy, EBTLStrategy, JSRLStrategy
-        from grid_teacher import FrozenTeacher, calibrate_energy_threshold
+        from minigrid6.grid_mixed_ppo import MixedPolicyPPO
+        from shared.strategies import AAStrategy, EBTLStrategy, JSRLStrategy
+        from minigrid6.grid_teacher import FrozenTeacher, calibrate_energy_threshold
 
         teacher = FrozenTeacher(teacher_path, device=args.device)
         if args.transfer == "aa":
@@ -154,8 +158,8 @@ def main() -> None:
         )
         print(f"[grid-student] guidance teacher: {teacher_path}")
     elif args.transfer == "ksrl":
-        from grid_ksrl import KickstartPPO
-        from grid_teacher import FrozenTeacher
+        from minigrid6.grid_ksrl import KickstartPPO
+        from minigrid6.grid_teacher import FrozenTeacher
 
         teacher = FrozenTeacher(teacher_path, device=args.device)
         model = build_ppo(

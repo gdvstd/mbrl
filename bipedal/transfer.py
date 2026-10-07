@@ -20,10 +20,10 @@ import gymnasium as gym
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 
-from jsrl import JSRLCurriculumCallback, JSRLSAC, build_horizons
-from kickstarting import KickstartSAC
-from reward_shaping import PotentialShapingWrapper
-from sac_common import build_sac
+from bipedal.jsrl import JSRLCurriculumCallback, JSRLSAC, build_horizons
+from bipedal.kickstarting import KickstartSAC
+from bipedal.reward_shaping import PotentialShapingWrapper
+from bipedal.sac_common import build_sac
 
 TRANSFER_METHODS = ["none", "weight_init", "jsrl", "reward_shaping", "ksrl"]
 

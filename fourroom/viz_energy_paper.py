@@ -15,6 +15,10 @@ Usage: python viz_energy_paper.py --scenario altgoal
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
@@ -28,8 +32,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from sb3_contrib import MaskablePPO
 
-from fourroom_env import GAP_RIGHT, SCENARIOS, SIZE, action_mask
-from paper_common import FrozenMaskableTeacher, _wrap
+from fourroom.fourroom_env import GAP_RIGHT, SCENARIOS, SIZE, action_mask
+from fourroom.paper_common import FrozenMaskableTeacher, _wrap
 
 INK, MUTED, WALL = "#1f2430", "#5c6370", "#454a54"
 DIVERGING = LinearSegmentedColormap.from_list(

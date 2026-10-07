@@ -16,13 +16,17 @@ Usage:
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
 from sb3_contrib import MaskablePPO
 
-from fourroom_env import SCENARIOS
-from paper_common import (
+from fourroom.fourroom_env import SCENARIOS
+from fourroom.paper_common import (
     N_ENVS,
     FrozenMaskableTeacher,
     build_mppo,
@@ -97,8 +101,8 @@ def main() -> None:
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl"):
-        from grid_strategies import AAStrategy, EBTLStrategy, JSRLStrategy
-        from paper_mixed_ppo import MixedPolicyMaskablePPO
+        from shared.strategies import AAStrategy, EBTLStrategy, JSRLStrategy
+        from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
         if args.transfer == "aa":
@@ -117,7 +121,7 @@ def main() -> None:
             strategy=strategy)
         print(f"[paper-student] guidance teacher: {teacher_path}")
     elif args.transfer == "ksrl":
-        from paper_ksrl import KickstartMaskablePPO
+        from fourroom.paper_ksrl import KickstartMaskablePPO
 
         teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
         model = build_mppo(

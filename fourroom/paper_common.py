@@ -27,7 +27,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.vec_env import VecEnv
 
 import fourroom_env  # noqa: F401  (registers the envs on import)
-from fourroom_env import SCENARIOS, action_mask
+from fourroom.fourroom_env import SCENARIOS, action_mask
 
 N_ENVS = 8  # paper Table 3: number of parallel environments
 PAPER_SOLVED_REWARD = 0.95  # reward is exactly 1 on success; eval mean >=0.95

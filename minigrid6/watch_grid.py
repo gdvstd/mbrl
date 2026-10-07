@@ -14,6 +14,10 @@ cut at --max-steps frames to keep GIFs short.
 """
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+
 import argparse
 import os
 
@@ -22,7 +26,7 @@ from minigrid.wrappers import ImgObsWrapper
 from PIL import Image
 from stable_baselines3 import PPO
 
-from grid_common import grid_env_id
+from minigrid6.grid_common import grid_env_id
 
 
 def rollout_frames(model, env, episodes: int, max_steps: int,

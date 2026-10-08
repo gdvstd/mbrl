@@ -43,22 +43,27 @@ def goal_room(u) -> int:
     return 0
 
 
-def collect(env_id, actor, n_frames, seed, tag_mode, ego):
+def collect(env_id, actor, n_frames, seed, tag_mode, ego, return_masks=False):
     kw = {"agent_view_size": 11} if ego else {}
     env = _wrap(gym.make(env_id, **kw), ego=ego)
     u = env.unwrapped
     obs, _ = env.reset(seed=seed)
     groom = goal_room(u) if tag_mode == "goal" else 0
-    obs_buf, tags = [], []
+    obs_buf, tags, mask_buf = [], [], []
     for _ in range(n_frames):
+        m = action_mask(env)
         obs_buf.append(obs.copy())
         tags.append(groom if tag_mode == "goal" else (1 if u.carrying else 0))
-        a = actor(obs, action_mask(env))
+        if return_masks:
+            mask_buf.append(np.asarray(m, dtype=bool).copy())
+        a = actor(obs, m)
         obs, _, te, tr, _ = env.step(a)
         if te or tr:
             obs, _ = env.reset()
             groom = goal_room(u) if tag_mode == "goal" else 0
     env.close()
+    if return_masks:
+        return np.stack(obs_buf), np.array(tags), np.stack(mask_buf)
     return np.stack(obs_buf), np.array(tags)
 
 
@@ -109,11 +114,14 @@ class TopKSAE(th.nn.Module):
         self.W_dec = th.nn.Parameter(th.randn(d_dict, d_in) * 0.02)
         self.b_dec = th.nn.Parameter(th.zeros(d_in))
 
-    def forward(self, x):
+    def encode(self, x):
+        """Sparse latent code z (TopK-thresholded, ReLU'd)."""
         h = (x - self.b_dec) @ self.W_enc + self.b_enc
         topv, topi = th.topk(h, self.k, dim=-1)
-        hs = th.zeros_like(h).scatter_(-1, topi, th.relu(topv))
-        return hs @ self.W_dec + self.b_dec
+        return th.zeros_like(h).scatter_(-1, topi, th.relu(topv))
+
+    def forward(self, x):
+        return self.encode(x) @ self.W_dec + self.b_dec
 
     @th.no_grad()
     def renorm(self):

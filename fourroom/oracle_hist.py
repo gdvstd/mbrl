@@ -12,10 +12,11 @@ altgoal / 0.7 locked):
     SAE recon   : open iff recon <= Quantile_{1-q}(recon_src)
     SAID cosine : open iff cos >= Quantile_q(cos_src)   (act-cond, layer avg)
 
-Figure: 4 configs x 3 gates, grouped bars of the dD distribution for
-gate-open (advised) vs gate-closed (not advised) states
--> runs/videos/keynote/oracle_gate_hist.png
-Cache: runs/oracle_hist_<cfg>.npz
+Figures (4 configs x 3 gates, gate-open vs gate-closed states):
+  oracle_gate_hist.png   discrete step gain dD = D(s) - D(s') buckets
+  oracle_value_hist.png  continuous value gain dV = gamma^D(s') - gamma^D(s)
+                         (gamma=0.9; near-goal mistakes cost more value)
+Cache: runs/oracle_val_<cfg>.npz (stores D(s), D(s') so both derive)
 
 Usage: python fourroom/oracle_hist.py
 """
@@ -52,12 +53,13 @@ INK, MUTED, GRID = "#1f2430", "#5c6370", "#e6e8ec"
 C_OPEN, C_CLOSED = "#2a78d6", "#eb6834"
 KEYNOTE = "runs/videos/keynote"
 BUCKETS = (1, 0, -1, -2, -3)  # last bucket = "<= -3"
+GAMMA = 0.9  # paper Table 3; V(s) = gamma^D(s)
 
 
 def probe_config(scenario: str, ego: bool) -> dict[str, np.ndarray]:
     from sb3_contrib import MaskablePPO
     sfx = "_ego" if ego else ""
-    cache = f"runs/oracle_hist_{scenario}{sfx}.npz"
+    cache = f"runs/oracle_val_{scenario}{sfx}.npz"
     if _os.path.exists(cache):
         d = np.load(cache)
         return {k: d[k] for k in d.files}
@@ -76,12 +78,18 @@ def probe_config(scenario: str, ego: bool) -> dict[str, np.ndarray]:
     masked = logits.masked_fill(~th.as_tensor(tgt_masks), -1e9)
     adv_a = masked.argmax(-1).numpy()
     phi = th.logsumexp(logits, dim=-1).numpy()
-    dD = np.full(len(states), np.nan)
+    # D(s) and D(s') under the teacher's advice -- keeping both lets us
+    # plot the discrete step gain dD = ds - ds2 AND the continuous
+    # discounted-value gain  dV = gamma^ds2 - gamma^ds.
+    ds = np.full(len(states), np.nan)
+    ds2 = np.full(len(states), np.nan)
+    from fourroom.oracle_advice import _step
     for i, (s, lk) in enumerate(zip(states, lay_keys)):
         lay, D = layouts[lk]
-        r = regrets(lay, D, s)[adv_a[i]]
-        if not np.isnan(r):
-            dD[i] = 1.0 - r
+        d0 = D.get(s)
+        d1 = D.get(_step(lay, s, int(adv_a[i])))
+        if d0 is not None and d0 > 0 and d1 is not None:
+            ds[i], ds2[i] = d0, d1
 
     # source rollouts: SAE training + thresholds
     tag_mode = "goal" if scenario == "altgoal" else "key"
@@ -107,9 +115,10 @@ def probe_config(scenario: str, ego: bool) -> dict[str, np.ndarray]:
                            protos[act_tgt]) / len(LAYERS)
         print(f"[hist] {scenario}{sfx} {name} done", flush=True)
 
-    keep = ~np.isnan(dD)
+    keep = ~np.isnan(ds)
     out = dict(
-        dD=dD[keep], phi=phi[keep], recon=recon_tgt[keep], said=cos_tgt[keep],
+        ds=ds[keep], ds2=ds2[keep],
+        phi=phi[keep], recon=recon_tgt[keep], said=cos_tgt[keep],
         tau_phi=np.array(np.quantile(A_src["phi"][:n_tr], q)),
         tau_recon=np.array(np.quantile(recon_src, 1 - q)),
         tau_said=np.array(np.quantile(cos_src, q)))
@@ -144,33 +153,74 @@ def panel(ax, dd_open, dd_closed, title):
     ax.tick_params(colors=MUTED, labelsize=7)
 
 
+def value_panel(ax, dv_open, dv_closed, title):
+    both = np.concatenate([dv_open, dv_closed])
+    lo, hi = np.percentile(both, 0.5), np.percentile(both, 99.5)
+    pad = 0.05 * (hi - lo + 1e-9)
+    bins = np.linspace(lo - pad, hi + pad, 45)
+    ax.hist(dv_open, bins=bins, density=True, alpha=0.55, color=C_OPEN,
+            label="advised (gate open)")
+    ax.hist(dv_closed, bins=bins, density=True, alpha=0.55, color=C_CLOSED,
+            label="not advised (gate closed)")
+    ax.axvline(0, color=MUTED, lw=0.8, ls=":")
+    ax.set_title(title, fontsize=9, color=INK)
+    ax.set_yticks([])
+    for sp in ("top", "right", "left"):
+        ax.spines[sp].set_visible(False)
+    ax.spines["bottom"].set_color(GRID)
+    ax.tick_params(colors=MUTED, labelsize=7)
+
+
 def main() -> None:
     _os.makedirs(KEYNOTE, exist_ok=True)
-    fig, axes = plt.subplots(4, 3, figsize=(11.5, 11), dpi=200, sharey=True)
-    fig.patch.set_facecolor("white")
+    fig_d, axes_d = plt.subplots(4, 3, figsize=(11.5, 11), dpi=200,
+                                 sharey=True)
+    fig_v, axes_v = plt.subplots(4, 3, figsize=(11.5, 11), dpi=200)
+    for f in (fig_d, fig_v):
+        f.patch.set_facecolor("white")
     for r, (scenario, ego) in enumerate(CFGS):
         cfg = f"{scenario}{'_ego' if ego else ''}"
         s = probe_config(scenario, ego)
+        dD = s["ds"] - s["ds2"]
+        # oracle advantage: Q(s, a_T) - V*(s), with V*(s) = gamma^(D(s)-1)
+        # (reward 1 lands on the transition into the goal). 0 = optimal
+        # advice; a wasted step costs -gamma^(D-1)(1-gamma), so time is
+        # charged too, and mistakes near the goal cost more.
+        dV = GAMMA ** s["ds2"] - GAMMA ** (s["ds"] - 1)
         gates = (
             s["phi"] >= s["tau_phi"],
             s["recon"] <= s["tau_recon"],
             s["said"] >= s["tau_said"],
         )
         for c, (gname, sel) in enumerate(zip(GATES, gates)):
-            mean_o = s["dD"][sel].mean() if sel.any() else float("nan")
-            mean_c = s["dD"][~sel].mean() if (~sel).any() else float("nan")
-            panel(axes[r, c], s["dD"][sel], s["dD"][~sel],
+            mo = dD[sel].mean() if sel.any() else float("nan")
+            mc = dD[~sel].mean() if (~sel).any() else float("nan")
+            panel(axes_d[r, c], dD[sel], dD[~sel],
                   f"{cfg} — {gname}  (open {sel.mean():.0%}, "
-                  f"ΔD̄ {mean_o:.2f} vs {mean_c:.2f})")
+                  f"ΔD̄ {mo:.2f} vs {mc:.2f})")
+            vo = dV[sel].mean() if sel.any() else float("nan")
+            vc = dV[~sel].mean() if (~sel).any() else float("nan")
+            value_panel(axes_v[r, c], dV[sel], dV[~sel],
+                        f"{cfg} — {gname}  (open {sel.mean():.0%}, "
+                        f"Ā {vo:+.3f} vs {vc:+.3f})")
         print(f"[hist] {cfg} plotted", flush=True)
-    axes[0, 0].legend(frameon=False, fontsize=8)
-    axes[1, 0].set_ylabel("fraction of steps", fontsize=9, color=INK)
-    fig.suptitle("Oracle value gain ΔD of teacher advice: gate-open vs "
-                 "gate-closed states (+1 = optimal step)",
-                 fontsize=12, color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.965))
-    fig.savefig(f"{KEYNOTE}/oracle_gate_hist.png", facecolor="white")
+    axes_d[0, 0].legend(frameon=False, fontsize=8)
+    axes_d[1, 0].set_ylabel("fraction of steps", fontsize=9, color=INK)
+    fig_d.suptitle("Oracle step gain ΔD of teacher advice: gate-open vs "
+                   "gate-closed states (+1 = optimal step)",
+                   fontsize=12, color=INK)
+    fig_d.tight_layout(rect=(0, 0, 1, 0.965))
+    fig_d.savefig(f"{KEYNOTE}/oracle_gate_hist.png", facecolor="white")
     print(f"wrote {KEYNOTE}/oracle_gate_hist.png")
+
+    axes_v[0, 0].legend(frameon=False, fontsize=8)
+    fig_v.suptitle("Oracle ADVANTAGE of teacher advice, "
+                   f"A = γ^D(s′) − γ^(D(s)−1), γ={GAMMA}  "
+                   "(0 = optimal advice; wasted/backward steps < 0)",
+                   fontsize=12, color=INK)
+    fig_v.tight_layout(rect=(0, 0, 1, 0.965))
+    fig_v.savefig(f"{KEYNOTE}/oracle_advantage_hist.png", facecolor="white")
+    print(f"wrote {KEYNOTE}/oracle_advantage_hist.png")
     print("ORACLE HIST ALL DONE")
 
 

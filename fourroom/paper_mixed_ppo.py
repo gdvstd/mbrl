@@ -25,9 +25,18 @@ from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 
 class MixedPolicyMaskablePPO(MaskablePPO):
-    def __init__(self, *args, teacher=None, strategy=None, **kwargs):
+    def __init__(self, *args, teacher=None, strategy=None,
+                 advlog_path: str | None = None, **kwargs):
         self.teacher = teacher
         self.strategy = strategy
+        self.advlog_path = advlog_path
+        # advice-value log: per step (teacher phi, advised?, GAE advantage,
+        # num_timesteps) -- lets us correlate the energy score with the
+        # realized advantage of teacher actions (unbiased under AA, whose
+        # coin-flip schedule is state-independent).
+        self._advlog: dict[str, list] = {
+            "phi": [], "advised": [], "adv": [], "t": []}
+        self._advlog_rollouts = 0
         self._episode_steps: np.ndarray | None = None
         self._guided = 0
         self._acted = 0
@@ -49,6 +58,9 @@ class MixedPolicyMaskablePPO(MaskablePPO):
         n_steps = 0
         action_masks = None
         rollout_buffer.reset()
+        log_phi: list[np.ndarray] = []
+        log_mask: list[np.ndarray] = []
+        log_t: list[np.ndarray] = []
         if use_masking and not is_masking_supported(env):
             raise ValueError("Environment does not support action masking.")
         callback.on_rollout_start()
@@ -74,6 +86,12 @@ class MixedPolicyMaskablePPO(MaskablePPO):
                     log_probs = th.where(mask, t_log_probs, log_probs)
                 self._guided += int(mask.sum().item())
                 self._acted += env.num_envs
+                if self.advlog_path is not None:
+                    log_phi.append(
+                        self.teacher.energy_score(obs_tensor).cpu().numpy())
+                    log_mask.append(mask.cpu().numpy())
+                    log_t.append(np.full(env.num_envs, self.num_timesteps,
+                                         dtype=np.int64))
                 # =============================================================
             actions = actions.cpu().numpy()
 
@@ -117,11 +135,33 @@ class MixedPolicyMaskablePPO(MaskablePPO):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        if self.advlog_path is not None:
+            # (n_steps, n_envs) flattens in the same order as the buffer
+            self._advlog["phi"].append(np.stack(log_phi).ravel())
+            self._advlog["advised"].append(np.stack(log_mask).ravel())
+            self._advlog["adv"].append(rollout_buffer.advantages.copy().ravel())
+            self._advlog["t"].append(np.stack(log_t).ravel())
+            self._advlog_rollouts += 1
+            if self._advlog_rollouts % 50 == 0:
+                self._save_advlog()
         self.logger.record("guidance/rate", self._guided / max(self._acted, 1))
         self.logger.record("guidance/progress", progress)
         self._guided = self._acted = 0
         callback.on_rollout_end()
         return True
+
+    def _save_advlog(self) -> None:
+        np.savez(self.advlog_path,
+                 phi=np.concatenate(self._advlog["phi"]),
+                 advised=np.concatenate(self._advlog["advised"]),
+                 adv=np.concatenate(self._advlog["adv"]),
+                 t=np.concatenate(self._advlog["t"]))
+
+    def learn(self, *args, **kwargs):
+        out = super().learn(*args, **kwargs)
+        if self.advlog_path is not None and self._advlog["phi"]:
+            self._save_advlog()
+        return out
 
     def train(self) -> None:
         self.policy.set_training_mode(True)

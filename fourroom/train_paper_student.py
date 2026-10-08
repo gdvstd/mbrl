@@ -118,7 +118,8 @@ def main() -> None:
         model = build_mppo(
             train_env, args.seed, args.device, tb_dir,
             algo_cls=MixedPolicyMaskablePPO, teacher=teacher,
-            strategy=strategy)
+            strategy=strategy,
+            advlog_path=os.path.join(outdir, "advlog.npz"))
         print(f"[paper-student] guidance teacher: {teacher_path}")
     elif args.transfer == "ksrl":
         from fourroom.paper_ksrl import KickstartMaskablePPO

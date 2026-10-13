@@ -37,6 +37,7 @@ class MixedPolicyMaskablePPO(MaskablePPO):
         self._advlog: dict[str, list] = {
             "phi": [], "advised": [], "adv": [], "t": []}
         self._advlog_rollouts = 0
+        self._strategy_takes_masks: bool | None = None
         self._episode_steps: np.ndarray | None = None
         self._guided = 0
         self._acted = 0
@@ -74,9 +75,16 @@ class MixedPolicyMaskablePPO(MaskablePPO):
                 actions, values, log_probs = self.policy(
                     obs_tensor, action_masks=action_masks)
                 # === strategy-masked teacher acting (behavior log-prob) =====
+                if self._strategy_takes_masks is None:
+                    import inspect
+                    self._strategy_takes_masks = "action_masks" in (
+                        inspect.signature(self.strategy.guidance_mask)
+                        .parameters)
+                extra = ({"action_masks": action_masks}
+                         if self._strategy_takes_masks else {})
                 mask = self.strategy.guidance_mask(
-                    self.teacher, obs_tensor, self._episode_steps, progress
-                ).to(actions.device)
+                    self.teacher, obs_tensor, self._episode_steps, progress,
+                    **extra).to(actions.device)
                 if mask.any():
                     t_dist = self.teacher.distribution(
                         obs_tensor, action_masks=action_masks)

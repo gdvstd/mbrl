@@ -46,7 +46,7 @@ def main() -> None:
                         required=True)
     parser.add_argument(
         "--transfer",
-        choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl"],
+        choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -62,6 +62,8 @@ def main() -> None:
     parser.add_argument("--jsrl-h0", type=int, default=50)
     parser.add_argument("--ksrl-lambda0", type=float, default=0.5)
     parser.add_argument("--ebtl-q", type=float, default=None)
+    parser.add_argument("--gap-eta", type=float, default=0.5,
+                        help="gap: min normalized student entropy to advise")
     parser.add_argument("--ego", action="store_true",
                         help="11x11 egocentric partial obs (occluded)")
     args = parser.parse_args()
@@ -100,8 +102,9 @@ def main() -> None:
                         frozen += 1
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
-    elif args.transfer in ("aa", "jsrl", "ebtl"):
-        from shared.strategies import AAStrategy, EBTLStrategy, JSRLStrategy
+    elif args.transfer in ("aa", "jsrl", "ebtl", "gap"):
+        from shared.strategies import (
+            AAStrategy, EBTLStrategy, GapStrategy, JSRLStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
@@ -113,13 +116,20 @@ def main() -> None:
             tau = calibrate_energy_threshold(
                 teacher, src_env, seed=args.seed + 2000, quantile=ebtl_q,
                 device=args.device, ego=args.ego)
-            print(f"[paper-student] EBTL tau={tau:.3f} (q={ebtl_q})")
-            strategy = EBTLStrategy(tau, args.delta0, args.end_frac)
+            print(f"[paper-student] {args.transfer} tau={tau:.3f} "
+                  f"(q={ebtl_q})")
+            if args.transfer == "gap":
+                strategy = GapStrategy(tau, args.gap_eta, args.delta0,
+                                       args.end_frac)
+            else:
+                strategy = EBTLStrategy(tau, args.delta0, args.end_frac)
         model = build_mppo(
             train_env, args.seed, args.device, tb_dir,
             algo_cls=MixedPolicyMaskablePPO, teacher=teacher,
             strategy=strategy,
             advlog_path=os.path.join(outdir, "advlog.npz"))
+        if args.transfer == "gap":
+            strategy.student_policy = model.policy
         print(f"[paper-student] guidance teacher: {teacher_path}")
     elif args.transfer == "ksrl":
         from fourroom.paper_ksrl import KickstartMaskablePPO

@@ -68,6 +68,10 @@ def main() -> None:
     parser.add_argument("--gap-no-coin", action="store_true",
                         help="gap: drop the delta(t) coin (the entropy "
                              "condition self-anneals)")
+    parser.add_argument("--oracle-teacher", action="store_true",
+                        help="aa/jsrl/ksrl: replace the trained teacher "
+                             "with the BFS-optimal oracle policy "
+                             "(upper-bound control; full-obs only)")
     parser.add_argument("--ego", action="store_true",
                         help="11x11 egocentric partial obs (occluded)")
     args = parser.parse_args()
@@ -112,7 +116,14 @@ def main() -> None:
             ScoreGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
-        teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
+        if args.oracle_teacher:
+            assert args.transfer in ("aa", "jsrl") and not args.ego, \
+                "--oracle-teacher: aa/jsrl/ksrl, full-obs only"
+            from fourroom.oracle_teacher import OracleTeacher
+            teacher = OracleTeacher(args.scenario)
+            print("[paper-student] using ORACLE teacher (BFS-optimal)")
+        else:
+            teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
         if args.transfer == "aa":
             strategy = AAStrategy(args.delta0, args.end_frac)
         elif args.transfer == "jsrl":
@@ -148,7 +159,13 @@ def main() -> None:
     elif args.transfer == "ksrl":
         from fourroom.paper_ksrl import KickstartMaskablePPO
 
-        teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
+        if args.oracle_teacher:
+            assert not args.ego, "--oracle-teacher: full-obs only"
+            from fourroom.oracle_teacher import OracleTeacher
+            teacher = OracleTeacher(args.scenario)
+            print("[paper-student] using ORACLE teacher (BFS-optimal)")
+        else:
+            teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
         model = build_mppo(
             train_env, args.seed, args.device, tb_dir,
             algo_cls=KickstartMaskablePPO, teacher=teacher,

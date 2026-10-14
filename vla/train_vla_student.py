@@ -33,6 +33,12 @@ def main() -> None:
                    choices=["scratch", "finetune", "aa", "jsrl", "ksrl"],
                    default="scratch")
     p.add_argument("--teacher", type=str, default="runs_vla/teacher_bc.pt")
+    p.add_argument("--openvla-lora", type=str, default=None,
+                   help="aa/jsrl: use the OpenVLA-LoRA teacher at this dir "
+                        "instead of the local BC teacher")
+    p.add_argument("--norm-stats", type=str, default=None,
+                   help="norm_stats.json for the OpenVLA teacher "
+                        "(default: <lora>/../norm_stats.json)")
     p.add_argument("--tasks", type=int, nargs="*", default=[4, 7])
     p.add_argument("--timesteps", type=int, default=100_000)
     p.add_argument("--seed", type=int, default=0)
@@ -59,14 +65,24 @@ def main() -> None:
         from strategies import AAStrategy, JSRLStrategy
         from vla_mixed_ppo import MixedPolicyVLAPPO
 
-        teacher = FrozenBCTeacher(a.teacher, device=a.device)
+        if a.openvla_lora:
+            from openvla_teacher import OpenVLATeacher
+            norm = a.norm_stats or os.path.join(
+                os.path.dirname(a.openvla_lora.rstrip("/")),
+                "norm_stats.json")
+            teacher = OpenVLATeacher(a.openvla_lora, norm, device="cuda")
+            print(f"[vla-student] OpenVLA teacher: {a.openvla_lora}")
+        else:
+            teacher = FrozenBCTeacher(a.teacher, device=a.device)
+            print(f"[vla-student] guidance teacher: {a.teacher}")
         strategy = (AAStrategy(a.delta0, a.end_frac) if a.transfer == "aa"
                     else JSRLStrategy(a.jsrl_h0, a.end_frac))
         model = build_vla_ppo(env, a.seed, a.device,
                               tb_dir=os.path.join(outdir, "tb"),
                               algo_cls=MixedPolicyVLAPPO,
                               teacher=teacher, strategy=strategy)
-        print(f"[vla-student] guidance teacher: {a.teacher}")
+        if a.openvla_lora:
+            teacher.attach(env)
     elif a.transfer == "ksrl":
         from vla_ksrl import KickstartVLAPPO
 

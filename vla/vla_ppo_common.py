@@ -42,6 +42,12 @@ class TaskMixEnv(gym.Env):
         self._envs = {}  # lazily created, kept alive per task
         self._cur = None
         self._t = 0
+        # exposed for raw-observation teachers (OpenVLA): the student
+        # trains on preprocessed 128px obs, but a VLA teacher needs the
+        # raw agentview frame + the task's language instruction.
+        self.last_raw_image = None
+        self.task_language = ""
+        self._langs = {}
         self.observation_space = spaces.Dict({
             "image": spaces.Box(0, 255, (IN_CHANNELS, IMG_SIZE, IMG_SIZE), np.uint8),
             "proprio": spaces.Box(-np.inf, np.inf, (PROPRIO_DIM,), np.float32),
@@ -54,8 +60,16 @@ class TaskMixEnv(gym.Env):
         return self._envs[tid]
 
     def _obs(self, raw):
+        self.last_raw_image = raw["agentview_image"]
         img, prop = preprocess_obs(raw, self._tid)
         return {"image": (img * 255).astype(np.uint8), "proprio": prop}
+
+    def _language(self, tid: int) -> str:
+        if tid not in self._langs:
+            from libero.libero import benchmark
+            bm = benchmark.get_benchmark_dict()["libero_object"]()
+            self._langs[tid] = bm.get_task(tid).language
+        return self._langs[tid]
 
     def reset(self, *, seed=None, options=None):
         from vla_common import get_init_states
@@ -66,6 +80,7 @@ class TaskMixEnv(gym.Env):
         raw = self._cur.set_init_state(
             inits[int(self.rng.integers(len(inits)))])
         self._t = 0
+        self.task_language = self._language(self._tid)
         return self._obs(raw), {"task_id": self._tid}
 
     def step(self, action):

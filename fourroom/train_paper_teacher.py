@@ -45,7 +45,7 @@ def main() -> None:
     parser.add_argument("--energy-reg", action="store_true")
     parser.add_argument("--ego", action="store_true",
                         help="11x11 egocentric partial obs (occluded) instead of full grid")
-    parser.add_argument("--energy-lambda", type=float, default=0.1)
+    parser.add_argument("--energy-lambda", type=float, default=1e-4)
     parser.add_argument("--m-in", type=float, default=10.0)
     parser.add_argument("--m-out", type=float, default=15.0)
     args = parser.parse_args()

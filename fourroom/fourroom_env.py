@@ -12,20 +12,20 @@ the left doorway is walled off, exactly as drawn.
       source: goal at a random cell of Room 1 (upper-left)
       target: goal at a random cell of Room 1 OR Room 3 (lower-right), 50/50
   * Locked Room ("unlocked-to-locked")
-      source: same map, free movement between all rooms
+      source: upper-start -> lower-goal, 3 passages (left walled)
       target: the upper/lower passage is a single LOCKED door; a key is
               randomly placed in the upper rooms; goal in the lower rooms;
               agent starts in the upper rooms
 
 Paper rules reproduced here:
-  * sparse reward: exactly 1 on reaching the goal, 0 otherwise (no step decay)
+  * time-decayed reward 1 - 0.9*(steps/max_steps) on reaching the goal
   * action masking (Appendix A.1): forward masked when facing a blocking
     cell; pickup only when facing a key; toggle only when facing a door;
     drop and done permanently disabled  -> see action_mask()
 
-NOT specified in the paper (our choices, documented): agent start
-distribution (random over allowed rooms) and max_steps (100 alt-goal /
-150 locked).
+Author-confirmed config (2026-10 feedback): max_steps 500, time-decayed
+reward (MiniGrid default), locked SOURCE = upper-start / lower-goal with
+3 passages (left walled).
 """
 from __future__ import annotations
 
@@ -71,8 +71,9 @@ class FourRoomBase(MiniGridEnv):
             **kwargs,
         )
 
-    def _reward(self) -> float:
-        return 1.0  # paper: sparse reward of exactly 1, no step decay
+    # reward: MiniGrid default 1 - 0.9*(step_count/max_steps) -- author
+    # feedback (2026-10) confirmed the paper uses the time-decayed reward,
+    # not a flat 1 (our earlier override removed).
 
     def _rand_room_cell(self, rooms) -> tuple[int, int]:
         (xa, xb), (ya, yb) = ROOMS[self._rand_elem(rooms)]
@@ -118,7 +119,7 @@ class FourRoomBase(MiniGridEnv):
 class AltGoalEnv(FourRoomBase):
     """Goal in Room 1 (source) or Room 1/Room 3 (target); free movement."""
 
-    def __init__(self, goal_rooms=(1,), max_steps: int = 100, **kwargs):
+    def __init__(self, goal_rooms=(1,), max_steps: int = 500, **kwargs):
         self.goal_rooms = tuple(goal_rooms)
         super().__init__(max_steps=max_steps, **kwargs)
 
@@ -130,10 +131,10 @@ class AltGoalEnv(FourRoomBase):
 
 
 class LockedEnv(FourRoomBase):
-    """Source: all passages open. Target: single locked door to the lower
-    half, key in the upper rooms, goal in the lower rooms."""
+    """Source: upper-start/lower-goal, 3 passages. Target: the right
+    passage becomes a locked door; key in the upper rooms."""
 
-    def __init__(self, locked: bool = False, max_steps: int = 150,
+    def __init__(self, locked: bool = False, max_steps: int = 500,
                  agent_rooms=None, **kwargs):
         self.locked = locked
         # paper: OOD collection randomizes the start over ALL rooms rather
@@ -143,9 +144,13 @@ class LockedEnv(FourRoomBase):
 
     def _gen_grid(self, width, height) -> None:
         if not self.locked:
-            self._build_walls((GAP_TOP, GAP_LEFT, GAP_RIGHT, GAP_BOTTOM))
-            self._place_agent_in_rooms((1, 2, 3, 4))
-            self._place_in_rooms(Goal(), (1, 2, 3, 4))
+            # author feedback (2026-10): the SOURCE locked env mirrors the
+            # target's task -- start in the UPPER rooms, goal in the LOWER
+            # rooms, and only 3 passages (the left one is walled off, the
+            # right one is open where the target has the locked door).
+            self._build_walls((GAP_TOP, GAP_RIGHT, GAP_BOTTOM))
+            self._place_agent_in_rooms(self.agent_rooms or UPPER)
+            self._place_in_rooms(Goal(), LOWER)
         else:
             # lower half reachable ONLY through the locked door at GAP_RIGHT
             # (Fig. 2a: left passage closed, right passage becomes the door)

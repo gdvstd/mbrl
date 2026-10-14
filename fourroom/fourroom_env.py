@@ -178,6 +178,12 @@ def _register() -> None:
             entry_point="fourroom_env:AltGoalEnv", kwargs={"goal_rooms": (1,)}),
         "FourRoomAltGoalTgt-v0": dict(
             entry_point="fourroom_env:AltGoalEnv", kwargs={"goal_rooms": (1, 3)}),
+        # goal randomized over rooms 1/2/4 (room 3 stays OOD): forces the
+        # teacher to READ the goal channel instead of shortcutting on
+        # position alone -- the causal test for the altgoal phi inversion.
+        "FourRoomAltGoalRndSrc-v0": dict(
+            entry_point="fourroom_env:AltGoalEnv",
+            kwargs={"goal_rooms": (1, 2, 4)}),
         "FourRoomLockedSrc-v0": dict(
             entry_point="fourroom_env:LockedEnv", kwargs={"locked": False}),
         "FourRoomLockedTgt-v0": dict(
@@ -191,5 +197,6 @@ _register()
 
 SCENARIOS = {
     "altgoal": ("FourRoomAltGoalSrc-v0", "FourRoomAltGoalTgt-v0"),
+    "altgoal_rnd": ("FourRoomAltGoalRndSrc-v0", "FourRoomAltGoalTgt-v0"),
     "locked": ("FourRoomLockedSrc-v0", "FourRoomLockedTgt-v0"),
 }

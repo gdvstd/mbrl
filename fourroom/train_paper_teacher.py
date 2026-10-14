@@ -27,12 +27,14 @@ from fourroom.paper_common import (
     make_paper_vec_env,
 )
 
-DEFAULT_TIMESTEPS = {"altgoal": 200_000, "locked": 800_000}
+DEFAULT_TIMESTEPS = {"altgoal": 200_000, "altgoal_rnd": 400_000,
+                     "locked": 800_000}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["altgoal", "locked"],
+    parser.add_argument("--scenario",
+                        choices=["altgoal", "altgoal_rnd", "locked"],
                         required=True)
     parser.add_argument("--timesteps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)

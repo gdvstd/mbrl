@@ -95,18 +95,23 @@ class GapStrategy:
     """
 
     def __init__(self, tau: float, eta: float = 0.5, delta0: float = 1.0,
-                 end_frac: float = 0.5) -> None:
+                 end_frac: float = 0.5, use_coin: bool = True) -> None:
         self.tau = tau
         self.eta = eta
         self.delta0 = delta0
         self.end_frac = end_frac
+        # the entropy condition is self-annealing (H_S drops as the student
+        # masters states), so the hand-tuned decay coin is redundant --
+        # use_coin=False makes the gate purely state-driven.
+        self.use_coin = use_coin
         self.student_policy = None
 
     def guidance_mask(self, teacher, obs_tensor, episode_steps, progress,
                       action_masks=None):
-        p = _linear_decay(self.delta0, self.end_frac, progress)
         gate = (teacher.energy_score(obs_tensor) >= self.tau).cpu()
-        gate &= th.rand(obs_tensor.shape[0]) < p
+        if self.use_coin:
+            p = _linear_decay(self.delta0, self.end_frac, progress)
+            gate &= th.rand(obs_tensor.shape[0]) < p
         if self.student_policy is not None and gate.any():
             dist = self.student_policy.get_distribution(
                 obs_tensor, action_masks=action_masks)

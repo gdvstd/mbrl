@@ -65,6 +65,9 @@ def main() -> None:
     parser.add_argument("--ebtl-q", type=float, default=None)
     parser.add_argument("--gap-eta", type=float, default=0.5,
                         help="gap: min normalized student entropy to advise")
+    parser.add_argument("--gap-no-coin", action="store_true",
+                        help="gap: drop the delta(t) coin (the entropy "
+                             "condition self-anneals)")
     parser.add_argument("--ego", action="store_true",
                         help="11x11 egocentric partial obs (occluded)")
     args = parser.parse_args()
@@ -130,7 +133,8 @@ def main() -> None:
                   f"(q={ebtl_q})")
             if args.transfer == "gap":
                 strategy = GapStrategy(tau, args.gap_eta, args.delta0,
-                                       args.end_frac)
+                                       args.end_frac,
+                                       use_coin=not args.gap_no_coin)
             else:
                 strategy = EBTLStrategy(tau, args.delta0, args.end_frac)
         model = build_mppo(

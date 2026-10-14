@@ -158,10 +158,12 @@ def value_panel(ax, dv_open, dv_closed, title):
     lo, hi = np.percentile(both, 0.5), np.percentile(both, 99.5)
     pad = 0.05 * (hi - lo + 1e-9)
     bins = np.linspace(lo - pad, hi + pad, 45)
-    ax.hist(dv_open, bins=bins, density=True, alpha=0.55, color=C_OPEN,
-            label="advised (gate open)")
-    ax.hist(dv_closed, bins=bins, density=True, alpha=0.55, color=C_CLOSED,
-            label="not advised (gate closed)")
+    # log y: the optimal-advice spike at 0 dwarfs the tails on a linear
+    # axis; the tail structure is what distinguishes the gates.
+    ax.hist(dv_open, bins=bins, density=True, alpha=0.6, color=C_OPEN,
+            label="advised (gate open)", log=True)
+    ax.hist(dv_closed, bins=bins, density=True, alpha=0.6, color=C_CLOSED,
+            label="not advised (gate closed)", log=True)
     ax.axvline(0, color=MUTED, lw=0.8, ls=":")
     ax.set_title(title, fontsize=9, color=INK)
     ax.set_yticks([])

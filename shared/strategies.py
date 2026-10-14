@@ -58,6 +58,26 @@ class EBTLStrategy:
         return in_dist.cpu() & (th.rand(obs_tensor.shape[0]) < p)
 
 
+class ScoreGateStrategy:
+    """Generic EBTL-shaped gate for an arbitrary OOD score: advise iff
+    score(obs) is on the ID side of tau AND the decaying coin fires.
+    `higher_is_id=False` suits reconstruction-error-style scores."""
+
+    def __init__(self, score_fn, tau: float, higher_is_id: bool = True,
+                 delta0: float = 1.0, end_frac: float = 0.5) -> None:
+        self.score_fn = score_fn
+        self.tau = tau
+        self.higher_is_id = higher_is_id
+        self.delta0 = delta0
+        self.end_frac = end_frac
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        s = self.score_fn(obs_tensor).cpu()
+        in_dist = (s >= self.tau) if self.higher_is_id else (s <= self.tau)
+        return in_dist & (th.rand(obs_tensor.shape[0]) < p)
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

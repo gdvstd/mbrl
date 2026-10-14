@@ -46,7 +46,8 @@ def main() -> None:
                         required=True)
     parser.add_argument(
         "--transfer",
-        choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap"],
+        choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
+                 "sae"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -102,9 +103,10 @@ def main() -> None:
                         frozen += 1
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
-    elif args.transfer in ("aa", "jsrl", "ebtl", "gap"):
+    elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae"):
         from shared.strategies import (
-            AAStrategy, EBTLStrategy, GapStrategy, JSRLStrategy)
+            AAStrategy, EBTLStrategy, GapStrategy, JSRLStrategy,
+            ScoreGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         teacher = FrozenMaskableTeacher(teacher_path, device=args.device)
@@ -112,6 +114,14 @@ def main() -> None:
             strategy = AAStrategy(args.delta0, args.end_frac)
         elif args.transfer == "jsrl":
             strategy = JSRLStrategy(args.jsrl_h0, args.end_frac)
+        elif args.transfer == "sae":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_r = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000)
+            print(f"[paper-student] sae gate tau_r={tau_r:.4f} (q={ebtl_q})")
+            strategy = ScoreGateStrategy(score_fn, tau_r, higher_is_id=False,
+                                         delta0=args.delta0,
+                                         end_frac=args.end_frac)
         else:
             tau = calibrate_energy_threshold(
                 teacher, src_env, seed=args.seed + 2000, quantile=ebtl_q,

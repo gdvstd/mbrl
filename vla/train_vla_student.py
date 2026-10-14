@@ -30,8 +30,11 @@ from vla_ppo_common import (
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--transfer",
-                   choices=["scratch", "finetune", "aa", "jsrl", "ksrl"],
+                   choices=["scratch", "finetune", "aa", "jsrl", "ksrl",
+                            "bcrl"],
                    default="scratch")
+    p.add_argument("--init-from", type=str, default=None,
+                   help="bcrl: PPO zip to initialize from (BC-distilled)")
     p.add_argument("--teacher", type=str, default="runs_vla/teacher_bc.pt")
     p.add_argument("--openvla-lora", type=str, default=None,
                    help="aa/jsrl: use the OpenVLA-LoRA teacher at this dir "
@@ -56,7 +59,14 @@ def main() -> None:
     env = make_vla_vec_env(a.tasks, a.seed, n_envs=a.n_envs,
                            monitor_dir=os.path.join(outdir, "monitor"))
 
-    if a.transfer == "finetune":
+    if a.transfer == "bcrl":
+        from stable_baselines3 import PPO
+        assert a.init_from, "--transfer bcrl requires --init-from"
+        model = PPO.load(a.init_from, env=env, device=a.device,
+                         tensorboard_log=os.path.join(outdir, "tb"),
+                         seed=a.seed)
+        print(f"[vla-student] RL finetune from BC-distilled: {a.init_from}")
+    elif a.transfer == "finetune":
         model = build_vla_ppo(env, a.seed, a.device,
                               tb_dir=os.path.join(outdir, "tb"))
         load_teacher_into(model, a.teacher)

@@ -15,9 +15,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 INK, MUTED, GRID = "#1f2430", "#5c6370", "#e6e8ec"
-COLORS = {"gap": "#2a78d6", "ebtl": "#7a4fd3", "aa": "#eb6834",
-          "finetune": "#7fb069", "scratch": "#9aa1ad"}
-LABELS = {"gap": "Gap gate (ours)", "ebtl": "EBTL", "aa": "AA",
+COLORS = {"gap": "#2a78d6", "gapnc": "#17bebb", "sae": "#d81159",
+          "ebtl": "#7a4fd3", "aa": "#eb6834", "finetune": "#7fb069",
+          "scratch": "#9aa1ad"}
+LABELS = {"gap": "Gap gate", "gapnc": "Gap gate (no coin)",
+          "sae": "SAE gate", "ebtl": "EBTL", "aa": "AA",
           "finetune": "Fine-tune (frozen conv)", "scratch": "No transfer"}
 
 
@@ -34,7 +36,8 @@ def main() -> None:
     fig, axes = plt.subplots(1, 2, figsize=(11, 4), dpi=200)
     fig.patch.set_facecolor("white")
     for ax, sc in zip(axes, ("altgoal", "locked")):
-        for tr in ("scratch", "finetune", "aa", "ebtl", "gap"):
+        for tr in ("scratch", "finetune", "aa", "ebtl", "gap", "gapnc",
+                   "sae"):
             runs = [load(sc, tr, s) for s in range(3)]
             runs = [r for r in runs if r is not None]
             if not runs:

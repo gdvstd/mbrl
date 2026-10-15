@@ -35,6 +35,9 @@ def main() -> None:
                    default="scratch")
     p.add_argument("--init-from", type=str, default=None,
                    help="bcrl: PPO zip to initialize from (BC-distilled)")
+    p.add_argument("--critic-warmup", type=int, default=30_000,
+                   help="bcrl: steps of value-only training before "
+                        "unfreezing the actor")
     p.add_argument("--teacher", type=str, default="runs_vla/teacher_bc.pt")
     p.add_argument("--openvla-lora", type=str, default=None,
                    help="aa/jsrl: use the OpenVLA-LoRA teacher at this dir "
@@ -79,8 +82,25 @@ def main() -> None:
                          normalize_advantage=False)
         with th.no_grad():
             model.policy.log_std.fill_(float(np.log(0.1)))
+        # CRITIC WARMUP (bcrl4 post-mortem): the value head is randomly
+        # initialized, so V(s) -- and therefore GAE advantages -- are O(1)
+        # noise, and the first few PPO updates destroy the BC actor even
+        # with lr 1e-4 / no normalization. Freeze the actor side, let the
+        # critic fit the (BC-policy) returns, then unfreeze.
+        pol = model.policy
+        actor_params = (list(pol.pi_features_extractor.parameters())
+                        + list(pol.mlp_extractor.policy_net.parameters())
+                        + list(pol.action_net.parameters())
+                        + [pol.log_std])
+        for p_ in actor_params:
+            p_.requires_grad_(False)
+        print(f"[vla-student] bcrl critic warmup: {a.critic_warmup} steps "
+              f"(actor frozen)")
+        model.learn(total_timesteps=a.critic_warmup, progress_bar=False)
+        for p_ in actor_params:
+            p_.requires_grad_(True)
         print(f"[vla-student] RL finetune from BC-distilled: {a.init_from} "
-              f"(std reset to 0.1, ent_coef 0, lr 1e-4)")
+              f"(std 0.1, ent 0, lr 1e-4, no adv-norm, critic warmed)")
     elif a.transfer == "finetune":
         model = build_vla_ppo(env, a.seed, a.device,
                               tb_dir=os.path.join(outdir, "tb"))

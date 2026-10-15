@@ -93,8 +93,18 @@ def main() -> None:
     print(f"[bc] {len(data['actions'])} frames, "
           f"{len(np.unique(data['ep_id']))} episodes")
     env = make_vla_vec_env([SEEN_TASKS[0]], seed=0, n_envs=1)
-    model = build_vla_ppo(env, seed=0, device=a.device)
+    # SEPARATE pi/vf extractors: with the default shared trunk, the
+    # untrained value head's gradients destroy the BC actor within the
+    # first PPO update (bcrl/bcrl2 post-mortem, evalprobe 11955533).
+    from vla_ppo_common import PPO_HYPERPARAMS
+    pk = dict(PPO_HYPERPARAMS["policy_kwargs"],
+              share_features_extractor=False)
+    model = build_vla_ppo(env, seed=0, device=a.device, policy_kwargs=pk)
     bc_train(model, data, a.epochs, a.batch_size, a.device)
+    # give the value branch the trained features as a starting point --
+    # from here on its gradients stay on its own copy.
+    model.policy.vf_features_extractor.load_state_dict(
+        model.policy.pi_features_extractor.state_dict())
 
     os.makedirs(a.outdir, exist_ok=True)
     out = os.path.join(a.outdir, "bc_model.zip")

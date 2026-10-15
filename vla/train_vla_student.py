@@ -60,12 +60,21 @@ def main() -> None:
                            monitor_dir=os.path.join(outdir, "monitor"))
 
     if a.transfer == "bcrl":
+        import numpy as np
+        import torch as th
         from stable_baselines3 import PPO
         assert a.init_from, "--transfer bcrl requires --init-from"
+        # diagnosis (evalprobe 11953035): BC leaves std~0.26, which kills
+        # manipulation precision under stochastic collection (16% -> 2%),
+        # and zero-reward PPO updates then destroy the BC mean. Start the
+        # finetune tight and conservative instead.
         model = PPO.load(a.init_from, env=env, device=a.device,
                          tensorboard_log=os.path.join(outdir, "tb"),
-                         seed=a.seed)
-        print(f"[vla-student] RL finetune from BC-distilled: {a.init_from}")
+                         seed=a.seed, ent_coef=0.0, learning_rate=1e-4)
+        with th.no_grad():
+            model.policy.log_std.fill_(float(np.log(0.1)))
+        print(f"[vla-student] RL finetune from BC-distilled: {a.init_from} "
+              f"(std reset to 0.1, ent_coef 0, lr 1e-4)")
     elif a.transfer == "finetune":
         model = build_vla_ppo(env, a.seed, a.device,
                               tb_dir=os.path.join(outdir, "tb"))

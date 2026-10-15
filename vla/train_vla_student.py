@@ -68,9 +68,15 @@ def main() -> None:
         # manipulation precision under stochastic collection (16% -> 2%),
         # and zero-reward PPO updates then destroy the BC mean. Start the
         # finetune tight and conservative instead.
+        # normalize_advantage=False: with sparse early rewards the
+        # advantages are bootstrap noise, and normalization scales that
+        # noise to unit size -> ~800 noise updates erode the BC actor
+        # even at lr 1e-4 (bcrl3 post-mortem). Raw tiny advantages keep
+        # the actor still until real rewards arrive.
         model = PPO.load(a.init_from, env=env, device=a.device,
                          tensorboard_log=os.path.join(outdir, "tb"),
-                         seed=a.seed, ent_coef=0.0, learning_rate=1e-4)
+                         seed=a.seed, ent_coef=0.0, learning_rate=1e-4,
+                         normalize_advantage=False)
         with th.no_grad():
             model.policy.log_std.fill_(float(np.log(0.1)))
         print(f"[vla-student] RL finetune from BC-distilled: {a.init_from} "

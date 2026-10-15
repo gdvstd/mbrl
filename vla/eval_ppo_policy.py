@@ -23,9 +23,20 @@ def main() -> None:
     ap.add_argument("--model", required=True)
     ap.add_argument("--episodes", type=int, default=10)
     ap.add_argument("--stochastic", action="store_true")
+    ap.add_argument("--set-std", type=float, default=None,
+                    help="override policy std before eval")
+    ap.add_argument("--init-mode", choices=["first", "random"],
+                    default="first",
+                    help="first: inits[ep %% n] (distill-eval convention); "
+                         "random: uniform over the full init set "
+                         "(TaskMixEnv collection convention)")
     a = ap.parse_args()
     from stable_baselines3 import PPO
     model = PPO.load(a.model, device="cuda")
+    if a.set_std is not None:
+        import torch as th
+        with th.no_grad():
+            model.policy.log_std.fill_(float(np.log(a.set_std)))
     log_std = model.policy.log_std.detach().cpu().numpy()
     print(f"[eval] {a.model}  deterministic={not a.stochastic}")
     print(f"[eval] policy log_std: {np.round(log_std, 2)} "
@@ -34,10 +45,13 @@ def main() -> None:
     for tid in list(SEEN_TASKS) + list(UNSEEN_TASKS):
         env = make_env(tid)
         inits = get_init_states(tid)
+        rng = np.random.default_rng(tid)
         succ = 0
         for ep in range(a.episodes):
             env.reset()
-            raw = env.set_init_state(inits[ep % len(inits)])
+            k = (ep % len(inits) if a.init_mode == "first"
+                 else int(rng.integers(len(inits))))
+            raw = env.set_init_state(inits[k])
             r = 0.0
             for _ in range(MAX_STEPS):
                 img, prop = preprocess_obs(raw, tid)

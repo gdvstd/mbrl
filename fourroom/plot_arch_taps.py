@@ -1,5 +1,5 @@
 """Architecture diagram: the paper teacher's actor tower (Fig. 8a spec)
-with the three SAE tap locations (L1/L2/L3) and the energy score phi.
+with the three SAE tap locations (L1-L3 activations) and the energy phi.
 
 -> runs/videos/keynote/arch_taps.png
 Usage: python fourroom/plot_arch_taps.py
@@ -11,90 +11,113 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
-INK, MUTED = "#1f2430", "#5c6370"
-BOX_FC, BOX_EC = "#f2f4f7", "#c9ced6"
-C_TAP = {"L1": "#2a78d6", "L2": "#7a4fd3", "L3": "#d81159"}
-C_PHI = "#eb6834"
+INK, MUTED, FAINT = "#242a35", "#6b7280", "#aab0ba"
+SHADOW = "#e3e6ea"
+C_L1, C_L2, C_L3, C_PHI = "#2a78d6", "#7a4fd3", "#d81159", "#e8730c"
 
-BOXES = [  # (title, subtitle, output shape)
-    ("input", "full grid obs", "3×11×11"),
-    ("Conv 2×2 → 16", "+ ReLU", "16×10×10"),
-    ("MaxPool 2×2", "", "16×5×5"),
-    ("Conv 2×2 → 32", "+ ReLU", "32×4×4"),
-    ("Conv 2×2 → 64", "+ ReLU", "64×3×3"),
-    ("Flatten", "", "576"),
-    ("Linear 576 → 7", "action logits", "7"),
+BOXES = [  # (title, sub, out shape, fill tint)
+    ("Input", "full-grid obs", "3 × 11 × 11", "#f7f8fa"),
+    ("Conv 2×2, 16", "ReLU", "16 × 10 × 10", "#eef4fc"),
+    ("MaxPool 2×2", "", "16 × 5 × 5", "#eef4fc"),
+    ("Conv 2×2, 32", "ReLU", "32 × 4 × 4", "#f1effb"),
+    ("Conv 2×2, 64", "ReLU", "64 × 3 × 3", "#fdeef3"),
+    ("Flatten", "", "576", "#fdeef3"),
+    ("Linear 576 → 7", "action logits", "7", "#fdf3e7"),
 ]
-TAPS = {2: ("L1", "400-d"), 3: ("L2", "512-d"), 5: ("L3", "576-d")}
+TAPS = {2: ("L1 activation", "400-d", C_L1),
+        3: ("L2 activation", "512-d", C_L2),
+        5: ("L3 activation", "576-d", C_L3)}
+
+W, H, GAP = 1.62, 1.00, 0.34
+Y0 = 2.05
+X0 = 0.45
+
+
+def rounded(ax, x, y, w, h, fc, ec, lw=1.2, shadow=True):
+    if shadow:
+        ax.add_patch(FancyBboxPatch((x + 0.035, y - 0.045), w, h,
+                                    boxstyle="round,pad=0.035,rounding_size=0.09",
+                                    fc=SHADOW, ec="none", zorder=1))
+    ax.add_patch(FancyBboxPatch((x, y), w, h,
+                                boxstyle="round,pad=0.035,rounding_size=0.09",
+                                fc=fc, ec=ec, lw=lw, zorder=2))
 
 
 def main() -> None:
-    fig, ax = plt.subplots(figsize=(13.5, 3.8), dpi=200)
+    fig, ax = plt.subplots(figsize=(14.7, 4.9), dpi=200)
     fig.patch.set_facecolor("white")
-    ax.set_xlim(0, 13.5)
-    ax.set_ylim(0, 3.8)
+    ax.set_xlim(0, 14.7)
+    ax.set_ylim(0, 4.9)
     ax.axis("off")
 
-    w, h, y0, gap = 1.55, 1.05, 1.85, 0.32
     xs = []
-    for i, (title, sub, shape) in enumerate(BOXES):
-        x = 0.25 + i * (w + gap)
+    for i, (title, sub, shape, tint) in enumerate(BOXES):
+        x = X0 + i * (W + GAP)
         xs.append(x)
-        ax.add_patch(FancyBboxPatch(
-            (x, y0), w, h, boxstyle="round,pad=0.03",
-            fc=BOX_FC, ec=BOX_EC, lw=1.2))
-        ax.text(x + w / 2, y0 + h * 0.70, title, ha="center", va="center",
-                fontsize=9.5, color=INK, weight="bold")
+        rounded(ax, x, Y0, W, H, tint, "#d4d8de")
+        cy = Y0 + H
+        ax.text(x + W / 2, cy - 0.26, title, ha="center", va="center",
+                fontsize=10, color=INK, weight="bold", zorder=3)
         if sub:
-            ax.text(x + w / 2, y0 + h * 0.42, sub, ha="center", va="center",
-                    fontsize=8, color=MUTED)
-        ax.text(x + w / 2, y0 + h * 0.15, shape, ha="center", va="center",
-                fontsize=8.5, color=MUTED, style="italic")
+            ax.text(x + W / 2, cy - 0.52, sub, ha="center", va="center",
+                    fontsize=8, color=MUTED, zorder=3)
+        ax.text(x + W / 2, Y0 + 0.17, shape, ha="center", va="center",
+                fontsize=8.5, color=FAINT, style="italic", zorder=3)
         if i:
             ax.add_patch(FancyArrowPatch(
-                (x - gap + 0.02, y0 + h / 2), (x - 0.02, y0 + h / 2),
-                arrowstyle="-|>", mutation_scale=12, color=MUTED, lw=1.3))
+                (x - GAP + 0.03, Y0 + H / 2), (x - 0.04, Y0 + H / 2),
+                arrowstyle="-|>", mutation_scale=11, color=FAINT, lw=1.4,
+                zorder=2))
 
-    # SAE taps (dropped below the tower)
-    for i, (name, dim) in TAPS.items():
-        cx = xs[i] + w / 2
-        c = C_TAP[name]
-        ax.add_patch(FancyArrowPatch((cx, y0 - 0.02), (cx, y0 - 0.55),
-                                     arrowstyle="-|>", mutation_scale=11,
-                                     color=c, lw=1.6))
-        ax.add_patch(FancyBboxPatch((cx - 0.72, y0 - 1.12), 1.44, 0.52,
-                                    boxstyle="round,pad=0.03",
-                                    fc="white", ec=c, lw=1.6))
-        ax.text(cx, y0 - 0.78, f"{name} tap", ha="center", va="center",
-                fontsize=9.5, color=c, weight="bold")
-        ax.text(cx, y0 - 1.00, f"{dim} → TopK SAE", ha="center",
-                va="center", fontsize=8, color=MUTED)
+    # taps dropped below the tower
+    for i, (name, dim, c) in TAPS.items():
+        cx = xs[i] + W / 2
+        ax.plot([cx, cx], [Y0 - 0.04, Y0 - 0.52], color=c, lw=1.6,
+                solid_capstyle="round", zorder=2)
+        ax.plot(cx, Y0 - 0.56, marker="v", ms=5, color=c, zorder=2)
+        rounded(ax, cx - 0.86, Y0 - 1.30, 1.72, 0.62, "white", c, lw=1.5)
+        ax.text(cx, Y0 - 0.88, name, ha="center", va="center",
+                fontsize=9.5, color=c, weight="bold", zorder=3)
+        ax.text(cx, Y0 - 1.13, f"{dim}  →  TopK SAE", ha="center",
+                va="center", fontsize=8, color=MUTED, zorder=3)
 
-    # phi from the raw logits (raised above the head)
-    cx = xs[-1] + w / 2
-    ax.add_patch(FancyArrowPatch((cx, y0 + h + 0.02), (cx, y0 + h + 0.45),
-                                 arrowstyle="-|>", mutation_scale=11,
-                                 color=C_PHI, lw=1.6))
-    ax.add_patch(FancyBboxPatch((cx - 1.15, y0 + h + 0.48), 2.3, 0.52,
-                                boxstyle="round,pad=0.03",
-                                fc="white", ec=C_PHI, lw=1.6))
-    ax.text(cx, y0 + h + 0.82, "energy φ(s)", ha="center", va="center",
-            fontsize=9.5, color=C_PHI, weight="bold")
-    ax.text(cx, y0 + h + 0.58, "= logsumexp(raw logits)", ha="center",
-            va="center", fontsize=8, color=MUTED)
+    # phi raised above the policy head
+    cx = xs[-1] + W / 2
+    ax.plot([cx, cx], [Y0 + H + 0.04, Y0 + H + 0.46], color=C_PHI, lw=1.6,
+            solid_capstyle="round", zorder=2)
+    ax.plot(cx, Y0 + H + 0.50, marker="^", ms=5, color=C_PHI, zorder=2)
+    rounded(ax, cx - 1.22, Y0 + H + 0.58, 2.44, 0.66, "white", C_PHI,
+            lw=1.5)
+    ax.text(cx, Y0 + H + 1.02, "energy  φ(s)", ha="center", va="center",
+            fontsize=10, color=C_PHI, weight="bold", zorder=3)
+    ax.text(cx, Y0 + H + 0.76, "logsumexp of the raw logits", ha="center",
+            va="center", fontsize=8, color=MUTED, zorder=3)
 
-    ax.text(0.25, 0.22,
-            "Actor tower shown (25.7K params, paper Fig. 8a); the critic is "
-            "an identical separate tower → Linear 576→1 (value). "
-            "SAEs are trained on SOURCE-rollout activations at each tap; "
-            "π(a|s) = masked softmax of the logits.",
-            fontsize=8, color=MUTED, ha="left")
-    ax.set_title("Teacher network and probe locations: "
-                 "SAE taps L1/L2/L3 and the energy score φ",
-                 fontsize=12, color=INK, pad=14)
-    fig.tight_layout()
+    # input-side <-> policy-side axis under the taps
+    y_ax = 0.42
+    ax.add_patch(FancyArrowPatch((X0 + 0.2, y_ax), (xs[-1] + W - 0.2, y_ax),
+                                 arrowstyle="<|-|>", mutation_scale=10,
+                                 color=FAINT, lw=1.1))
+    ax.text(X0 + 0.25, y_ax + 0.17, "closer to the input", fontsize=8,
+            color=MUTED, ha="left")
+    ax.text(xs[-1] + W - 0.25, y_ax + 0.17, "closer to the policy",
+            fontsize=8, color=MUTED, ha="right")
+    ax.text((X0 + xs[-1] + W) / 2, y_ax - 0.24,
+            "ID/OOD separation decays along this axis "
+            "(L1 ≥ L2 ≥ L3 > φ)", fontsize=8.5, color=MUTED, ha="center",
+            style="italic")
+
+    ax.text(X0, 4.72,
+            "Teacher actor tower (25.7K params, paper Fig. 8a) — probe "
+            "locations", fontsize=12.5, color=INK, weight="bold",
+            va="center")
+    ax.text(X0, 4.42,
+            "SAEs are trained on source-rollout activations at each tap; "
+            "the critic is an identical, separate tower ending in "
+            "Linear 576 → 1.", fontsize=8.5, color=MUTED, va="center")
+
     out = "runs/videos/keynote/arch_taps.png"
-    fig.savefig(out, facecolor="white", bbox_inches="tight")
+    fig.savefig(out, facecolor="white", bbox_inches="tight", pad_inches=0.25)
     print("wrote", out)
 
 

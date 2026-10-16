@@ -108,9 +108,8 @@ def main() -> None:
             style="italic")
 
     ax.text(X0, 4.72,
-            "Teacher actor tower (25.7K params, paper Fig. 8a) — probe "
-            "locations", fontsize=12.5, color=INK, weight="bold",
-            va="center")
+            "Teacher actor tower (25.7K params, paper Fig. 8a)",
+            fontsize=12.5, color=INK, weight="bold", va="center")
     ax.text(X0, 4.42,
             "Each SAE is trained on the activations of its layer, collected "
             "from SOURCE-task rollouts (= the teacher's ID state "

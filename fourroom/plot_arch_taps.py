@@ -112,9 +112,9 @@ def main() -> None:
             "locations", fontsize=12.5, color=INK, weight="bold",
             va="center")
     ax.text(X0, 4.42,
-            "SAEs are trained on source-rollout activations at each tap; "
-            "the critic is an identical, separate tower ending in "
-            "Linear 576 → 1.", fontsize=8.5, color=MUTED, va="center")
+            "Each SAE is trained on the activations of its layer, collected "
+            "from SOURCE-task rollouts (= the teacher's ID state "
+            "distribution).", fontsize=8.5, color=MUTED, va="center")
 
     out = "runs/videos/keynote/arch_taps.png"
     fig.savefig(out, facecolor="white", bbox_inches="tight", pad_inches=0.25)

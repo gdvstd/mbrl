@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument(
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
-                 "sae"],
+                 "sae", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -65,6 +65,8 @@ def main() -> None:
     parser.add_argument("--ebtl-q", type=float, default=None)
     parser.add_argument("--gap-eta", type=float, default=0.5,
                         help="gap: min normalized student entropy to advise")
+    parser.add_argument("--sae-layer", choices=["L1", "L2", "L3"],
+                        default="L1", help="sae: which activation layer")
     parser.add_argument("--gap-no-coin", action="store_true",
                         help="gap: drop the delta(t) coin (the entropy "
                              "condition self-anneals)")
@@ -110,7 +112,7 @@ def main() -> None:
                         frozen += 1
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
-    elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae"):
+    elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "said"):
         from shared.strategies import (
             AAStrategy, EBTLStrategy, GapStrategy, JSRLStrategy,
             ScoreGateStrategy)
@@ -131,9 +133,19 @@ def main() -> None:
         elif args.transfer == "sae":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r = build_sae_gate(
-                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000)
-            print(f"[paper-student] sae gate tau_r={tau_r:.4f} (q={ebtl_q})")
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer)
+            print(f"[paper-student] sae gate [{args.sae_layer}] "
+                  f"tau_r={tau_r:.4f} (q={ebtl_q})")
             strategy = ScoreGateStrategy(score_fn, tau_r, higher_is_id=False,
+                                         delta0=args.delta0,
+                                         end_frac=args.end_frac)
+        elif args.transfer == "said":
+            from fourroom.sae_gate import build_said_gate
+            score_fn, tau_c = build_said_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000)
+            print(f"[paper-student] said gate tau_c={tau_c:.4f} (q={ebtl_q})")
+            strategy = ScoreGateStrategy(score_fn, tau_c, higher_is_id=True,
                                          delta0=args.delta0,
                                          end_frac=args.end_frac)
         else:

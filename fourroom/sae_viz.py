@@ -26,13 +26,13 @@ from fourroom.paper_common import FrozenMaskableTeacher
 
 INK, MUTED, GRID = "#1f2430", "#5c6370", "#e6e8ec"
 C_ID, C_OOD = "#2a78d6", "#eb6834"
-LAYER = "L1_pool400"
+LAYERS = ("L1_pool400", "L2_conv512", "L3_flat576")
 
 
 def scores_for(scenario: str, ego: bool):
     from sb3_contrib import MaskablePPO
     sfx = "_ego" if ego else ""
-    cache = f"runs/sae_scores_{scenario}{sfx}.npz"
+    cache = f"runs/sae_scores3_{scenario}{sfx}.npz"
     if _os.path.exists(cache):
         d = np.load(cache)
         return {k: d[k] for k in d.files}
@@ -50,11 +50,12 @@ def scores_for(scenario: str, ego: bool):
     ood_sel = tags == (3 if scenario == "altgoal" else 0)
     A_src, A_tgt = activations(teacher, src_obs), activations(teacher, tgt_obs)
     n_tr = int(len(src_obs) * 0.8)
-    sae = train_sae(A_src[LAYER][:n_tr])
-    out = dict(
-        phi_id=A_tgt["phi"][id_sel], phi_ood=A_tgt["phi"][ood_sel],
-        sae_id=recon_err(sae, A_tgt[LAYER][id_sel]),
-        sae_ood=recon_err(sae, A_tgt[LAYER][ood_sel]))
+    out = dict(phi_id=A_tgt["phi"][id_sel], phi_ood=A_tgt["phi"][ood_sel])
+    for layer in LAYERS:
+        sae = train_sae(A_src[layer][:n_tr])
+        out[f"{layer}_id"] = recon_err(sae, A_tgt[layer][id_sel])
+        out[f"{layer}_ood"] = recon_err(sae, A_tgt[layer][ood_sel])
+        print(f"[viz] {scenario}{sfx} {layer} sae done", flush=True)
     np.savez(cache, **out)
     return out
 
@@ -79,15 +80,17 @@ def panel(ax, id_s, ood_s, title, higher_is_ood: bool):
 def main() -> None:
     cfgs = [("altgoal", False), ("locked", False),
             ("altgoal", True), ("locked", True)]
-    fig, axes = plt.subplots(4, 2, figsize=(9, 10), dpi=200)
+    fig, axes = plt.subplots(4, 4, figsize=(15, 10), dpi=200)
     fig.patch.set_facecolor("white")
     for r, (sc, ego) in enumerate(cfgs):
         s = scores_for(sc, ego)
         name = f"{sc}{'_ego' if ego else ''}"
         panel(axes[r, 0], s["phi_id"], s["phi_ood"],
               f"{name} — energy φ", higher_is_ood=False)
-        panel(axes[r, 1], s["sae_id"], s["sae_ood"],
-              f"{name} — SAE L1 recon error", higher_is_ood=True)
+        for c, layer in enumerate(LAYERS):
+            short = layer.split("_")[0]
+            panel(axes[r, c + 1], s[f"{layer}_id"], s[f"{layer}_ood"],
+                  f"{name} — SAE {short} recon", higher_is_ood=True)
         print(f"[viz] {name} done", flush=True)
     axes[0, 0].legend(frameon=False, fontsize=9)
     fig.suptitle("ID/OOD separation on the hard split: energy score vs "

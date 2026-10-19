@@ -8,7 +8,7 @@ input, flatten 576 = 64*3*3), and one doorway at the CENTER of each wall
 segment. In the locked target the right doorway becomes the locked door and
 the left doorway is walled off, exactly as drawn.
 
-  * Alternating Goal Room
+  * Alternating Goal Room (agent starts in Room 2, both tasks)
       source: goal at a random cell of Room 1 (upper-left)
       target: goal at a random cell of Room 1 OR Room 3 (lower-right), 50/50
   * Locked Room ("unlocked-to-locked")
@@ -19,8 +19,8 @@ the left doorway is walled off, exactly as drawn.
 
 Paper rules reproduced here:
   * time-decayed reward 1 - 0.9*(steps/max_steps) on reaching the goal
-  * action masking (Appendix A.1): forward masked when facing a blocking
-    cell; pickup only when facing a key; toggle only when facing a door;
+  * action masking: forward masked only at WALLS (author-confirmed);
+    pickup only when facing a key; toggle only when facing a door;
     drop and done permanently disabled  -> see action_mask()
 
 Author-confirmed config (2026-10 feedback): max_steps 500, time-decayed
@@ -125,7 +125,9 @@ class AltGoalEnv(FourRoomBase):
 
     def _gen_grid(self, width, height) -> None:
         self._build_walls((GAP_TOP, GAP_LEFT, GAP_RIGHT, GAP_BOTTOM))
-        self._place_agent_in_rooms((1, 2, 3, 4))
+        # author feedback (2026-10): the agent starts in Room 2 (top
+        # right) in BOTH the source and the target task.
+        self._place_agent_in_rooms((2,))
         self._place_in_rooms(Goal(), self.goal_rooms)
         self.mission = "reach the goal"
 
@@ -171,7 +173,9 @@ def action_mask(env) -> np.ndarray:
     front = u.grid.get(*u.front_pos)
     mask = np.zeros(7, dtype=bool)
     mask[0] = mask[1] = True
-    mask[2] = front is None or front.can_overlap()
+    # author feedback (2026-10): forward is masked ONLY at walls --
+    # facing a key or a closed door it stays selectable (a physics no-op).
+    mask[2] = front is None or front.type != "wall"
     mask[3] = front is not None and front.type == "key" and u.carrying is None
     mask[5] = front is not None and front.type == "door"
     return mask

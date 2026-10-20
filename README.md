@@ -62,10 +62,30 @@ regularization exposes by shutting the gate entirely.
 
 ## Track 3 — Paper-faithful 11x11 Four-Room (main reproduction)
 
-The paper's actual GridWorld, reconstructed from Fig. 2a + Appendix A/B:
-3x3 rooms, center doorways, full-grid 11x11 observation, sparse reward
-(exactly 1), action masking, MaskablePPO with the paper's Table-3
-hyperparameters and Fig-8a architecture (25.7K params).
+The paper's actual GridWorld, reconstructed from Fig. 2a + Appendix A/B
+and then corrected twice against the authors' feedback. The confirmed
+("faithful") configuration, all encoded in `fourroom/fourroom_env.py`:
+
+- 3x3 rooms, center doorways, full-grid 11x11 observation (not ego)
+- max_steps 500; time-decayed reward `1 - 0.9*(steps/500)` on reaching
+  the goal (MiniGrid default, NOT a flat 1)
+- Alternating-Goal: agent starts in Room 2 (top right) in BOTH tasks;
+  goal in Room 1 (source) / Room 1 or 3 (target)
+- Locked source mirrors the target's task: upper-room start, lower-room
+  goal, 3 passages (left walled; right open where the target locks it)
+- action masking: forward masked ONLY at walls (keys/closed doors stay
+  selectable no-ops); pickup/toggle only when facing key/door
+- energy-regularization lambda 1e-4; EBTL q = 0.5 (altgoal) / 0.7 (locked)
+- MaskablePPO with the paper's Table-3 hyperparameters and Fig-8a
+  architecture (25.7K params)
+
+Under this config (runs/paperv3_*, 3 seeds) No-Transfer learns the tasks
+fully, the guidance methods reach ~1 with EBTL on top in altgoal, and
+locked reproduces the paper's ordering up to a ~200-300K right shift.
+Known deviations from the paper's figures: frozen-conv fine-tuning does
+not plateau in altgoal (the Room-2 start makes the teacher init very
+strong), and FULL fine-tuning -- absent from the paper -- dominates
+locked (solves ~300-360K vs ~800K+ for the best guidance).
 
 - `fourroom/fourroom_env.py` — AltGoal & Locked scenarios (+ `--ego` egocentric
   variant with occlusion)

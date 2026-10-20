@@ -1,11 +1,10 @@
 """The EBTL paper's 11x11 four-room GridWorld, reconstructed (arXiv 2506.16590).
 
 Two transfer scenarios, each a source/target env pair on the SAME 11x11 map.
-Geometry read off Fig. 2a (v2 -- the first reconstruction wrongly used 4x4
-rooms with corner doorways and was far harder than the paper's env): four
-3x3 rooms, a 2-thick outer border (making the full grid 11x11 = the Fig. 8a
-input, flatten 576 = 64*3*3), and one doorway at the CENTER of each wall
-segment. In the locked target the right doorway becomes the locked door and
+Author-confirmed geometry (round 3): a 9x9 grid -- 1-thick outer border,
+four 3x3 rooms, one doorway at the CENTER of each wall segment, open
+doorways marked with a Floor tile. The Fig.-8a flatten of 576 comes from
+padding=1 on the first conv layer, not from an 11x11 grid. In the locked target the right doorway becomes the locked door and
 the left doorway is walled off, exactly as drawn.
 
   * Alternating Goal Room (agent starts in Room 2, both tasks)
@@ -33,28 +32,28 @@ import numpy as np
 from gymnasium.envs.registration import register
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Door, Goal, Key, Wall
+from minigrid.core.world_object import Door, Floor, Goal, Key, Wall
 from minigrid.minigrid_env import MiniGridEnv
 
-SIZE = 11
-MID = 5  # wall row/col splitting the interior into four 3x3 rooms
-BORDER = 2  # outer wall thickness (Fig. 2a shows a thick border; with 3x3
-# rooms this is what makes the full grid 11x11 = the Fig. 8a input size)
+SIZE = 9  # author-confirmed: 9x9 grid (1-thick border + 3x3 rooms);
+# the Fig.-8a flatten of 576 comes from padding=1 on the first conv.
+MID = 4  # wall row/col splitting the interior into four 3x3 rooms
+BORDER = 1
 
 # room -> (x range, y range) of interior cells, rooms numbered as in the paper
 ROOMS = {
-    1: ((2, 4), (2, 4)),    # upper-left
-    2: ((6, 8), (2, 4)),    # upper-right
-    3: ((6, 8), (6, 8)),    # lower-right
-    4: ((2, 4), (6, 8)),    # lower-left
+    1: ((1, 3), (1, 3)),    # upper-left
+    2: ((5, 7), (1, 3)),    # upper-right
+    3: ((5, 7), (5, 7)),    # lower-right
+    4: ((1, 3), (5, 7)),    # lower-left
 }
 UPPER, LOWER = (1, 2), (3, 4)
 
 # doorway cells, one at the CENTER of each wall segment (read off Fig. 2a)
-GAP_TOP = (MID, 3)      # Room1 <-> Room2
-GAP_LEFT = (3, MID)     # Room1 <-> Room4
-GAP_RIGHT = (7, MID)    # Room2 <-> Room3  (becomes the locked door)
-GAP_BOTTOM = (MID, 7)   # Room4 <-> Room3
+GAP_TOP = (MID, 2)      # Room1 <-> Room2
+GAP_LEFT = (2, MID)     # Room1 <-> Room4
+GAP_RIGHT = (6, MID)    # Room2 <-> Room3  (becomes the locked door)
+GAP_BOTTOM = (MID, 6)   # Room4 <-> Room3
 
 
 class FourRoomBase(MiniGridEnv):
@@ -105,15 +104,15 @@ class FourRoomBase(MiniGridEnv):
         """2-thick outer border + 1-thick cross walls; `gaps` lists doorway
         cells (from GAP_*) to open."""
         self.grid = Grid(SIZE, SIZE)
-        for _ in range(1):
-            self.grid.wall_rect(0, 0, SIZE, SIZE)
-            self.grid.wall_rect(1, 1, SIZE - 2, SIZE - 2)
+        self.grid.wall_rect(0, 0, SIZE, SIZE)
         for y in range(BORDER, SIZE - BORDER):
             self.grid.set(MID, y, Wall())
         for x in range(BORDER, SIZE - BORDER):
             self.grid.set(x, MID, Wall())
+        # author feedback: open doorways are marked with a FLOOR tile
+        # (visible in the observation), not an empty cell.
         for gx, gy in gaps:
-            self.grid.set(gx, gy, None)
+            self.grid.set(gx, gy, Floor())
 
 
 class AltGoalEnv(FourRoomBase):

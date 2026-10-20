@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument("--timesteps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval-freq", type=int, default=20_000)
-    parser.add_argument("--n-eval-episodes", type=int, default=20)
+    parser.add_argument("--n-eval-episodes", type=int, default=100)
     parser.add_argument("--outdir", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--energy-reg", action="store_true")

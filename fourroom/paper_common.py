@@ -34,14 +34,16 @@ PAPER_SOLVED_REWARD = 0.95  # reward is exactly 1 on success; eval mean >=0.95
 
 
 class PaperFeaturesExtractor(BaseFeaturesExtractor):
-    """Fig. 8a conv tower: 11x11x3 -> 576 (64*3*3). No trailing linear."""
+    """Fig. 8a conv tower: 9x9x3 -(pad1)-> 576 (64*3*3). No trailing
+    linear. padding=1 on the first conv is author-confirmed."""
 
     def __init__(self, observation_space, features_dim: int = 576,
                  normalized_image: bool = False) -> None:
         super().__init__(observation_space, features_dim)
         n_in = observation_space.shape[0]
         self.cnn = nn.Sequential(
-            nn.Conv2d(n_in, 16, (2, 2)), nn.ReLU(), nn.MaxPool2d((2, 2)),
+            nn.Conv2d(n_in, 16, (2, 2), padding=1), nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
             nn.Conv2d(16, 32, (2, 2)), nn.ReLU(),
             nn.Conv2d(32, 64, (2, 2)), nn.ReLU(),
             nn.Flatten(),
@@ -63,9 +65,10 @@ PAPER_PPO_HYPERPARAMS = dict(
     gamma=0.9,
     gae_lambda=0.8,
     clip_range=0.2,
-    clip_range_vf=10.0,
+    clip_range_vf=None,     # TorchRL parity (author feedback round 3)
     vf_coef=0.5,
     ent_coef=0.01,
+    max_grad_norm=10.0,     # TorchRL parity (SB3 default is 0.5)
     normalize_advantage=False,
     policy_kwargs=dict(
         features_extractor_class=PaperFeaturesExtractor,
@@ -73,6 +76,9 @@ PAPER_PPO_HYPERPARAMS = dict(
         net_arch=dict(pi=[], vf=[]),
         share_features_extractor=False,
         normalize_images=False,
+        ortho_init=False,   # TorchRL parity
+        optimizer_class=th.optim.Adam,
+        optimizer_kwargs=dict(eps=1e-8),  # SB3 default is 1e-5
     ),
 )
 
@@ -81,7 +87,7 @@ def _wrap(env: gym.Env, ego: bool = False) -> gym.Env:
     """Default: full 11x11 grid obs. ego=True: the env's own PARTIAL
     egocentric view (rotated to the agent frame, occluded behind walls via
     MiniGrid's default see_through_walls=False) -- pair with
-    agent_view_size=11 so the network input shape is unchanged."""
+    agent_view_size=SIZE so the network input shape is unchanged."""
     env = ImgObsWrapper(env if ego else FullyObsWrapper(env))
     return ActionMasker(env, action_mask)
 
@@ -92,7 +98,7 @@ def make_paper_vec_env(env_id: str, seed: int, n_envs: int = N_ENVS,
                        ego: bool = False) -> VecEnv:
     env_kwargs = dict(env_kwargs or {})
     if ego:
-        env_kwargs.setdefault("agent_view_size", 11)
+        env_kwargs.setdefault("agent_view_size", 9)
     return make_vec_env(env_id, n_envs=n_envs, seed=seed,
                         wrapper_class=lambda e: _wrap(e, ego=ego),
                         monitor_dir=monitor_dir, env_kwargs=env_kwargs)
@@ -162,23 +168,31 @@ class FrozenMaskableTeacher:
 @th.no_grad()
 def calibrate_energy_threshold(teacher: FrozenMaskableTeacher,
                                source_env_id: str, seed: int,
-                               quantile: float, n_frames: int = 16_000,
+                               quantile: float, n_episodes: int = 100,
                                device: str = "cpu", ego: bool = False) -> float:
-    """tau = Quantile_q of phi over teacher states re-rolled (stochastically,
-    with masking) in the source env."""
-    from sb3_contrib.common.maskable.utils import get_action_masks
-    from stable_baselines3.common.vec_env import VecTransposeImage
-
-    env = VecTransposeImage(make_paper_vec_env(source_env_id, seed=seed,
-                                               ego=ego))
-    obs = env.reset()
-    scores = []
-    for _ in range(max(n_frames // env.num_envs, 1)):
-        obs_t = th.as_tensor(obs, device=device)
-        scores.append(teacher.energy_score(obs_t).cpu().numpy())
-        masks = get_action_masks(env)
-        dist = teacher.distribution(obs_t, action_masks=masks)
-        actions = dist.get_actions(deterministic=False).cpu().numpy()
-        obs, _, _, _ = env.step(actions)
+    """tau = Quantile_q of phi over the frames of SUCCESSFUL episodes from
+    `n_episodes` stochastic rollouts of the trained teacher in the source
+    env (author feedback round 3: 100 episodes, successful ones only)."""
+    kw = {"agent_view_size": 9} if ego else {}
+    env = _wrap(gym.make(source_env_id, **kw), ego=ego)
+    scores, n_succ = [], 0
+    for ep in range(n_episodes):
+        obs, _ = env.reset(seed=seed + ep)
+        ep_scores, r = [], 0.0
+        while True:
+            mask = action_mask(env)
+            obs_t, _ = teacher.policy.obs_to_tensor(obs)
+            ep_scores.append(float(teacher.energy_score(obs_t)))
+            dist = teacher.distribution(obs_t, action_masks=mask[None])
+            a = int(dist.get_actions(deterministic=False)[0])
+            obs, r, te, tr, _ = env.step(a)
+            if te or tr:
+                break
+        if r > 0:
+            scores.extend(ep_scores)
+            n_succ += 1
     env.close()
-    return float(np.quantile(np.concatenate(scores), quantile))
+    assert scores, "no successful teacher episodes during calibration"
+    print(f"[calibrate] {n_succ}/{n_episodes} successful episodes, "
+          f"{len(scores)} frames")
+    return float(np.quantile(np.array(scores), quantile))

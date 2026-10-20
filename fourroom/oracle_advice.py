@@ -170,7 +170,7 @@ def regrets(lay: Layout, D: dict, s) -> np.ndarray:
 # ---------------------------------------------------------------- collection
 def collect_oracle(env_id: str, actor, n_frames: int, seed: int, ego: bool):
     """Roll `actor`; per frame record obs, mask, oracle state and layout."""
-    kw = {"agent_view_size": 11} if ego else {}
+    kw = {"agent_view_size": 9} if ego else {}
     env = _wrap(gym.make(env_id, **kw), ego=ego)
     u = env.unwrapped
 

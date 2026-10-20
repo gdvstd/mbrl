@@ -39,12 +39,12 @@ def goal_room(u) -> int:
         for y in range(SIZE):
             c = u.grid.get(x, y)
             if c is not None and c.type == "goal":
-                return 1 if x < 5 else 3
+                return 1 if x < 4 else 3
     return 0
 
 
 def collect(env_id, actor, n_frames, seed, tag_mode, ego, return_masks=False):
-    kw = {"agent_view_size": 11} if ego else {}
+    kw = {"agent_view_size": 9} if ego else {}
     env = _wrap(gym.make(env_id, **kw), ego=ego)
     u = env.unwrapped
     obs, _ = env.reset(seed=seed)

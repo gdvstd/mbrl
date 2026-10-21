@@ -164,7 +164,8 @@ def main() -> None:
             train_env, args.seed, args.device, tb_dir,
             algo_cls=MixedPolicyMaskablePPO, teacher=teacher,
             strategy=strategy,
-            advlog_path=os.path.join(outdir, "advlog.npz"))
+            advlog_path=os.path.join(outdir, "advlog.npz"),
+            advlog_scenario=args.scenario)
         if args.transfer == "gap":
             strategy.student_policy = model.policy
         print(f"[paper-student] guidance teacher: {teacher_path}")

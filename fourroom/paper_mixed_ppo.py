@@ -26,16 +26,18 @@ from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 class MixedPolicyMaskablePPO(MaskablePPO):
     def __init__(self, *args, teacher=None, strategy=None,
-                 advlog_path: str | None = None, **kwargs):
+                 advlog_path: str | None = None,
+                 advlog_scenario: str | None = None, **kwargs):
         self.teacher = teacher
         self.strategy = strategy
         self.advlog_path = advlog_path
+        self.advlog_scenario = advlog_scenario
         # advice-value log: per step (teacher phi, advised?, GAE advantage,
         # num_timesteps) -- lets us correlate the energy score with the
         # realized advantage of teacher actions (unbiased under AA, whose
         # coin-flip schedule is state-independent).
         self._advlog: dict[str, list] = {
-            "phi": [], "advised": [], "adv": [], "t": []}
+            "phi": [], "advised": [], "adv": [], "t": [], "cond": []}
         self._advlog_rollouts = 0
         self._strategy_takes_masks: bool | None = None
         self._episode_steps: np.ndarray | None = None
@@ -62,6 +64,7 @@ class MixedPolicyMaskablePPO(MaskablePPO):
         log_phi: list[np.ndarray] = []
         log_mask: list[np.ndarray] = []
         log_t: list[np.ndarray] = []
+        log_cond: list[np.ndarray] = []
         if use_masking and not is_masking_supported(env):
             raise ValueError("Environment does not support action masking.")
         callback.on_rollout_start()
@@ -100,6 +103,19 @@ class MixedPolicyMaskablePPO(MaskablePPO):
                     log_mask.append(mask.cpu().numpy())
                     log_t.append(np.full(env.num_envs, self.num_timesteps,
                                          dtype=np.int64))
+                    # sub-task condition tag, decoded from the obs
+                    # (altgoal: goal room; locked: key still visible)
+                    tags = np.zeros(env.num_envs, dtype=np.int64)
+                    if self.advlog_scenario in ("altgoal", "locked"):
+                        tp = obs_tensor[:, 0].round().long().cpu()
+                        for i_ in range(env.num_envs):
+                            if self.advlog_scenario == "altgoal":
+                                pos = (tp[i_] == 8).nonzero()
+                                tags[i_] = (1 if len(pos)
+                                            and pos[0][0].item() < 4 else 3)
+                            else:
+                                tags[i_] = 0 if bool((tp[i_] == 5).any())                                     else 1
+                    log_cond.append(tags)
                 # =============================================================
             actions = actions.cpu().numpy()
 
@@ -149,6 +165,7 @@ class MixedPolicyMaskablePPO(MaskablePPO):
             self._advlog["advised"].append(np.stack(log_mask).ravel())
             self._advlog["adv"].append(rollout_buffer.advantages.copy().ravel())
             self._advlog["t"].append(np.stack(log_t).ravel())
+            self._advlog["cond"].append(np.stack(log_cond).ravel())
             self._advlog_rollouts += 1
             if self._advlog_rollouts % 50 == 0:
                 self._save_advlog()
@@ -163,7 +180,8 @@ class MixedPolicyMaskablePPO(MaskablePPO):
                  phi=np.concatenate(self._advlog["phi"]),
                  advised=np.concatenate(self._advlog["advised"]),
                  adv=np.concatenate(self._advlog["adv"]),
-                 t=np.concatenate(self._advlog["t"]))
+                 t=np.concatenate(self._advlog["t"]),
+                 cond=np.concatenate(self._advlog["cond"]))
 
     def learn(self, *args, **kwargs):
         out = super().learn(*args, **kwargs)

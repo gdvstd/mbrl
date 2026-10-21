@@ -43,17 +43,20 @@ def goal_room(u) -> int:
     return 0
 
 
-def collect(env_id, actor, n_frames, seed, tag_mode, ego, return_masks=False):
+def collect(env_id, actor, n_frames, seed, tag_mode, ego,
+            return_masks=False, return_eps=False):
     kw = {"agent_view_size": 9} if ego else {}
     env = _wrap(gym.make(env_id, **kw), ego=ego)
     u = env.unwrapped
     obs, _ = env.reset(seed=seed)
     groom = goal_room(u) if tag_mode == "goal" else 0
-    obs_buf, tags, mask_buf = [], [], []
+    obs_buf, tags, mask_buf, ep_buf = [], [], [], []
+    ep = 0
     for _ in range(n_frames):
         m = action_mask(env)
         obs_buf.append(obs.copy())
         tags.append(groom if tag_mode == "goal" else (1 if u.carrying else 0))
+        ep_buf.append(ep)
         if return_masks:
             mask_buf.append(np.asarray(m, dtype=bool).copy())
         a = actor(obs, m)
@@ -61,10 +64,14 @@ def collect(env_id, actor, n_frames, seed, tag_mode, ego, return_masks=False):
         if te or tr:
             obs, _ = env.reset()
             groom = goal_room(u) if tag_mode == "goal" else 0
+            ep += 1
     env.close()
+    out = [np.stack(obs_buf), np.array(tags)]
     if return_masks:
-        return np.stack(obs_buf), np.array(tags), np.stack(mask_buf)
-    return np.stack(obs_buf), np.array(tags)
+        out.append(np.stack(mask_buf))
+    if return_eps:
+        out.append(np.array(ep_buf))
+    return tuple(out)
 
 
 def teacher_actor(t):

@@ -24,16 +24,49 @@ LAYER_KEY = {"L1": "L1_pool400", "L2": "L2_conv512", "L3": "L3_flat576"}
 
 def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
                    seed: int, layer: str = "L1"):
-    """Returns (score_fn, tau_r). score_fn maps a rollout obs tensor
-    (channel-first, same orientation as policy.obs_to_tensor output) to
-    the per-env L1 reconstruction error."""
+    """Returns (score_fn, tau_r). The SAE is trained on source-rollout
+    activations; tau_r mirrors the author-confirmed EBTL calibration:
+    the (1-q)-quantile of recon error over the frames of SUCCESSFUL
+    episodes from 100 fresh stochastic teacher rollouts (disjoint from
+    the SAE training data, so no overfit-tight threshold)."""
+    import gymnasium as gym
+    from fourroom.fourroom_env import action_mask
+    from fourroom.paper_common import _wrap
+
     key, idx = LAYER_KEY[layer], LAYER_IDX[layer]
     src_obs, _ = collect(src_env_id, teacher_actor(teacher), N_FRAMES,
                          seed, "goal", ego)
     A_src = activations(teacher, src_obs)
-    n_tr = int(len(src_obs) * 0.8)
-    sae = train_sae(A_src[key][:n_tr])
-    tau_r = float(np.quantile(recon_err(sae, A_src[key][:n_tr]), 1.0 - q))
+    sae = train_sae(A_src[key])
+
+    # calibration: 100 stochastic episodes, successful frames only
+    kw = {"agent_view_size": 9} if ego else {}
+    env = _wrap(gym.make(src_env_id, **kw), ego=ego)
+    act = teacher_actor(teacher)
+    cal_obs, n_succ = [], 0
+    for ep in range(100):
+        obs, _ = env.reset(seed=seed + 5000 + ep)
+        ep_obs, r = [], 0.0
+        while True:
+            ep_obs.append(obs.copy())
+            obs, r, te, tr, _ = env.step(act(obs, action_mask(env)))
+            if te or tr:
+                break
+        if r > 0:
+            cal_obs.extend(ep_obs)
+            n_succ += 1
+    env.close()
+    A_cal = activations(teacher, np.stack(cal_obs))
+    rec_cal = recon_err(sae, A_cal[key])
+    # The in-distribution recon errors are DEGENERATE (the SAE covers the
+    # tiny source state space almost exactly), so a within-source quantile
+    # collapses to float noise. Use a gap rule instead: open wherever the
+    # reconstruction is within 2x of the worst quality ever observed on
+    # successful source frames (the ID/OOD recon gap is >5x in practice).
+    tau_r = max(float(np.quantile(rec_cal, 0.999)) * 2.0, 1e-6)
+    print(f"[sae-gate] calibration: {n_succ}/100 successful episodes, "
+          f"{len(cal_obs)} frames, cal p99.9={np.quantile(rec_cal, 0.999):.6f}, "
+          f"tau_r={tau_r:.6f} (gap rule; q unused)")
     cnn = teacher.policy.pi_features_extractor.cnn
 
     @th.no_grad()

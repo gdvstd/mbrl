@@ -37,6 +37,9 @@ from fourroom.sae_probe import (
     N_FRAMES, activations, collect, recon_err, student_actor, teacher_actor,
     train_sae,
 )
+from fourroom.said_probe import (
+    LAYERS, build_prototypes, cos_sim, encode_np, masked_argmax_actions,
+)
 
 INK, MUTED, GRID = "#1f2430", "#5c6370", "#e6e8ec"
 C_SRC, C_ID, C_OOD = "#4c86c6", "#f0a05a", "#9a6bd1"  # paper-ish palette
@@ -76,7 +79,7 @@ def panel(ax, src, tid, tood, tau, title, labels, xlabel):
 
 def main() -> None:
     from sb3_contrib import MaskablePPO
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7), dpi=200)
+    fig, axes = plt.subplots(3, 2, figsize=(12, 10), dpi=200)
     fig.patch.set_facecolor("white")
     for c, sc in enumerate(("altgoal", "locked")):
         src_env, tgt_env = SCENARIOS[sc]
@@ -85,10 +88,12 @@ def main() -> None:
         student = MaskablePPO.load(STUDENT[sc], device="cpu")
         tag_mode = "goal" if sc == "altgoal" else "key"
 
-        src_obs, _ = collect(src_env, teacher_actor(teacher), N_FRAMES, 11,
-                             tag_mode, False)
-        tgt_obs, tags = collect(tgt_env, student_actor(student), N_FRAMES,
-                                22, tag_mode, False)
+        src_obs, _, src_masks = collect(src_env, teacher_actor(teacher),
+                                        N_FRAMES, 11, tag_mode, False,
+                                        return_masks=True)
+        tgt_obs, tags, tgt_masks = collect(tgt_env, student_actor(student),
+                                           N_FRAMES, 22, tag_mode, False,
+                                           return_masks=True)
         id_sel = tags == 1
         ood_sel = tags == (3 if sc == "altgoal" else 0)
 
@@ -108,6 +113,26 @@ def main() -> None:
               recon_err(sae, A_tgt["L1_pool400"][ood_sel]), None,
               f"{sc} — SAE L1 reconstruction error", LABELS[sc],
               "reconstruction error")
+
+        # SAID-act: mean over the 3 layers of cosine(z, action prototype)
+        act_src = masked_argmax_actions(teacher, src_obs, src_masks)
+        act_tgt = masked_argmax_actions(teacher, tgt_obs, tgt_masks)
+        cos_src = np.zeros(len(src_obs) - n_tr)
+        cos_id = np.zeros(int(id_sel.sum()))
+        cos_ood = np.zeros(int(ood_sel.sum()))
+        for name in LAYERS:
+            sae_l = train_sae(A_src[name][:n_tr])
+            z_tr = encode_np(sae_l, A_src[name][:n_tr])
+            protos, _ = build_prototypes(z_tr, act_src[:n_tr])
+            cos_src += cos_sim(encode_np(sae_l, A_src[name][n_tr:]),
+                               protos[act_src[n_tr:]]) / len(LAYERS)
+            cos_id += cos_sim(encode_np(sae_l, A_tgt[name][id_sel]),
+                              protos[act_tgt[id_sel]]) / len(LAYERS)
+            cos_ood += cos_sim(encode_np(sae_l, A_tgt[name][ood_sel]),
+                               protos[act_tgt[ood_sel]]) / len(LAYERS)
+        panel(axes[2, c], cos_src, cos_id, cos_ood, None,
+              f"{sc} — SAID action-cosine (3-layer avg)", LABELS[sc],
+              "cosine to action prototype (higher = ID)")
         print(f"[fig3c] {sc} done", flush=True)
     axes[0, 0].legend(frameon=False, fontsize=8)
     fig.suptitle("Energy / SAE-recon distributions with sub-task condition "

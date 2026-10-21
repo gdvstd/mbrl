@@ -66,7 +66,9 @@ The paper's actual GridWorld, reconstructed from Fig. 2a + Appendix A/B
 and then corrected twice against the authors' feedback. The confirmed
 ("faithful") configuration, all encoded in `fourroom/fourroom_env.py`:
 
-- 3x3 rooms, center doorways, full-grid 11x11 observation (not ego)
+- 9x9 grid (1-thick border, 3x3 rooms, center doorways marked with Floor
+  tiles), full-grid observation; first conv uses padding=1 (the Fig-8a
+  flatten of 576; 25,704 params)
 - max_steps 500; time-decayed reward `1 - 0.9*(steps/500)` on reaching
   the goal (MiniGrid default, NOT a flat 1)
 - Alternating-Goal: agent starts in Room 2 (top right) in BOTH tasks;
@@ -76,16 +78,18 @@ and then corrected twice against the authors' feedback. The confirmed
 - action masking: forward masked ONLY at walls (keys/closed doors stay
   selectable no-ops); pickup/toggle only when facing key/door
 - energy-regularization lambda 1e-4; EBTL q = 0.5 (altgoal) / 0.7 (locked)
-- MaskablePPO with the paper's Table-3 hyperparameters and Fig-8a
-  architecture (25.7K params)
+- MaskablePPO with the paper's Table-3 hyperparameters, TorchRL-parity
+  settings (clip_range_vf=None, max_grad_norm=10, ortho_init=False,
+  Adam eps=1e-8), 100-episode held-out evals, and successful-episode
+  tau calibration
 
-Under this config (runs/paperv3_*, 3 seeds) No-Transfer learns the tasks
-fully, the guidance methods reach ~1 with EBTL on top in altgoal, and
-locked reproduces the paper's ordering up to a ~200-300K right shift.
-Known deviations from the paper's figures: frozen-conv fine-tuning does
-not plateau in altgoal (the Room-2 start makes the teacher init very
-strong), and FULL fine-tuning -- absent from the paper -- dominates
-locked (solves ~300-360K vs ~800K+ for the best guidance).
+Under this config (runs/paperv4_*, 3 seeds) the paper's key results
+reproduce: No-Transfer learns fully in every seed, frozen-conv
+fine-tuning plateaus in both scenarios, and EBTL is the fastest method
+in both (altgoal solve 65-100K vs scratch 90-145K; locked 560-720K,
+lowest seed variance). Remaining second-order deviations: AA/JSRL/KSRL
+are slower than the paper's curves in altgoal, and the guidance margin
+over No-Transfer in locked is thinner than Fig. 4b.
 
 - `fourroom/fourroom_env.py` — AltGoal & Locked scenarios (+ `--ego` egocentric
   variant with occlusion)

@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument(
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
-                 "sae", "saerate", "saeclip", "saeks", "said"],
+                 "sae", "saerate", "saeclip", "saeks", "saeksonce", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -125,7 +125,7 @@ def main() -> None:
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
-                           "saeclip", "saeks", "said"):
+                           "saeclip", "saeks", "saeksonce", "said"):
         from shared.strategies import (
             AAStrategy, ClipGateStrategy, EBTLStrategy, GapStrategy,
             JSRLStrategy, KSGateStrategy, RateGateStrategy,
@@ -179,6 +179,17 @@ def main() -> None:
                                         init_tau=tau_r, higher_is_id=False,
                                         delta0=args.delta0,
                                         end_frac=args.end_frac)
+        elif args.transfer == "saeksonce":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_ks, _ = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer, ks_once_env=tgt_env)
+            print(f"[paper-student] KS-ONCE sae gate [{args.sae_layer}] "
+                  f"tau_ks={tau_ks:.6f} (frozen)")
+            strategy = ScoreGateStrategy(score_fn, tau_ks,
+                                         higher_is_id=False,
+                                         delta0=args.delta0,
+                                         end_frac=args.end_frac)
         elif args.transfer == "saeks":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r, rec_cal = build_sae_gate(

@@ -23,7 +23,8 @@ LAYER_KEY = {"L1": "L1_pool400", "L2": "L2_conv512", "L3": "L3_flat576"}
 
 
 def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
-                   seed: int, layer: str = "L1", tau_mult: float = 2.0):
+                   seed: int, layer: str = "L1", tau_mult: float = 2.0,
+                   ks_once_env: str | None = None):
     """Returns (score_fn, tau_r). The SAE is trained on source-rollout
     activations; tau_r mirrors the author-confirmed EBTL calibration:
     the (1-q)-quantile of recon error over the frames of SUCCESSFUL
@@ -67,6 +68,42 @@ def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
     print(f"[sae-gate] calibration: {n_succ}/100 successful episodes, "
           f"{len(cal_obs)} frames, cal p99.9={np.quantile(rec_cal, 0.999):.6f}, "
           f"tau_r={tau_r:.6f} (gap rule x{tau_mult:g}; q unused)")
+
+    if ks_once_env is not None:
+        # KS-once: one pre-training two-sample calibration. Target sample =
+        # masked-uniform random rollouts (the paper's ereg OOD-set recipe),
+        # SAME size as the source calibration sample; tau = argmax of the
+        # ECDF gap F_S - F_T (Youden-optimal under the PU mixture,
+        # pi-independent). No online knobs.
+        rng = np.random.default_rng(seed + 9000)
+
+        def rand_act(obs, mask):
+            return int(rng.choice(np.flatnonzero(np.asarray(mask))))
+
+        tenv = _wrap(gym.make(ks_once_env, **kw), ego=ego)
+        tgt_obs = []
+        ep = 0
+        while len(tgt_obs) < len(rec_cal):
+            obs, _ = tenv.reset(seed=seed + 9000 + ep)
+            while len(tgt_obs) < len(rec_cal):
+                tgt_obs.append(obs.copy())
+                obs, r, te, tr, _ = tenv.step(
+                    rand_act(obs, action_mask(tenv)))
+                if te or tr:
+                    break
+            ep += 1
+        tenv.close()
+        rec_tgt = recon_err(sae, activations(teacher, np.stack(tgt_obs))[key])
+        src_s = np.sort(rec_cal)
+        tgt_s = np.sort(rec_tgt)
+        cand = np.sort(np.concatenate([src_s, tgt_s]))
+        gap = (np.searchsorted(src_s, cand, side="right") / len(src_s)
+               - np.searchsorted(tgt_s, cand, side="right") / len(tgt_s))
+        i = int(np.argmax(gap))
+        tau_r = float(cand[i])
+        print(f"[sae-gate] KS-once: {len(rec_cal)} src vs {len(tgt_obs)} tgt"
+              f" frames ({ep} random episodes), tau_ks={tau_r:.6f} "
+              f"D={gap[i]:.3f}")
     cnn = teacher.policy.pi_features_extractor.cnn
 
     @th.no_grad()

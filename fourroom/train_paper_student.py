@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument(
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
-                 "sae", "saerate", "saeclip", "said"],
+                 "sae", "saerate", "saeclip", "saeks", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -77,6 +77,8 @@ def main() -> None:
                         help="saeclip: min gate-open fraction guardrail")
     parser.add_argument("--sae-rate-hi", type=float, default=0.10,
                         help="saeclip: max gate-open fraction guardrail")
+    parser.add_argument("--sae-ks-dmin", type=float, default=0.1,
+                        help="saeks: min KS gap D to keep the gate on")
     parser.add_argument("--gap-no-coin", action="store_true",
                         help="gap: drop the delta(t) coin (the entropy "
                              "condition self-anneals)")
@@ -123,10 +125,11 @@ def main() -> None:
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
-                           "saeclip", "said"):
+                           "saeclip", "saeks", "said"):
         from shared.strategies import (
             AAStrategy, ClipGateStrategy, EBTLStrategy, GapStrategy,
-            JSRLStrategy, RateGateStrategy, ScoreGateStrategy)
+            JSRLStrategy, KSGateStrategy, RateGateStrategy,
+            ScoreGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         if args.oracle_teacher:
@@ -143,7 +146,7 @@ def main() -> None:
             strategy = JSRLStrategy(args.jsrl_h0, args.end_frac)
         elif args.transfer == "sae":
             from fourroom.sae_gate import build_sae_gate
-            score_fn, tau_r = build_sae_gate(
+            score_fn, tau_r, _ = build_sae_gate(
                 teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
                 layer=args.sae_layer, tau_mult=args.sae_tau_mult)
             print(f"[paper-student] sae gate [{args.sae_layer}] "
@@ -153,7 +156,7 @@ def main() -> None:
                                          end_frac=args.end_frac)
         elif args.transfer == "saeclip":
             from fourroom.sae_gate import build_sae_gate
-            score_fn, tau_r = build_sae_gate(
+            score_fn, tau_r, _ = build_sae_gate(
                 teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
                 layer=args.sae_layer, tau_mult=args.sae_tau_mult)
             print(f"[paper-student] CLIPPED sae gate [{args.sae_layer}] "
@@ -166,7 +169,7 @@ def main() -> None:
                                         end_frac=args.end_frac)
         elif args.transfer == "saerate":
             from fourroom.sae_gate import build_sae_gate
-            score_fn, tau_r = build_sae_gate(
+            score_fn, tau_r, _ = build_sae_gate(
                 teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
                 layer=args.sae_layer)
             print(f"[paper-student] RATE-targeted sae gate "
@@ -176,6 +179,18 @@ def main() -> None:
                                         init_tau=tau_r, higher_is_id=False,
                                         delta0=args.delta0,
                                         end_frac=args.end_frac)
+        elif args.transfer == "saeks":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_r, rec_cal = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer, tau_mult=args.sae_tau_mult)
+            print(f"[paper-student] KS-calibrated sae gate "
+                  f"[{args.sae_layer}] init_tau={tau_r:.4f} "
+                  f"n_cal={len(rec_cal)} d_min={args.sae_ks_dmin}")
+            strategy = KSGateStrategy(score_fn, rec_cal, init_tau=tau_r,
+                                      d_min=args.sae_ks_dmin,
+                                      delta0=args.delta0,
+                                      end_frac=args.end_frac)
         elif args.transfer == "said":
             from fourroom.sae_gate import build_said_gate
             score_fn, tau_c = build_said_gate(

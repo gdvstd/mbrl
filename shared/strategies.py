@@ -163,6 +163,77 @@ class ClipGateStrategy:
         return (s <= self._tau()) & (th.rand(obs_tensor.shape[0]) < p)
 
 
+class KSGateStrategy:
+    """KS/Youden-optimal gate under a PU mixture model (online calibration).
+
+    Model: target visitation recon errors are a mixture
+    F_T = pi * F_S + (1 - pi) * F_OOD with the ID component matching the
+    source calibration distribution F_S. Then for any tau,
+        F_S(tau) - F_T(tau) = (1 - pi) * [TPR(tau) - FPR(tau)],
+    so argmax_tau of the OBSERVABLE CDF gap equals the Youden-optimal
+    threshold of the LATENT ID-vs-OOD classifier, with no knowledge of pi.
+
+    Online procedure: keep the fixed calibration sample (sorted); maintain
+    a rolling buffer of recent target scores; every `recompute_every` new
+    scores set tau* = argmax_c [F_S(c) - F_T(c)] over the pooled candidate
+    points and EMA-smooth. D = max gap = (1-pi)*separability is a gate
+    health signal: if D < d_min there is no reliably ID region in current
+    visitation and the gate stays closed. Before warmup, init_tau is used.
+    lower-is-ID scores (recon error) only; coin delta(t) unchanged."""
+
+    def __init__(self, score_fn, cal_scores, init_tau: float,
+                 d_min: float = 0.1, delta0: float = 1.0,
+                 end_frac: float = 0.5, buf_size: int = 20000,
+                 warmup: int = 2048, recompute_every: int = 512,
+                 ema: float = 0.5) -> None:
+        self.score_fn = score_fn
+        self.cal = th.as_tensor(cal_scores, dtype=th.float32).sort().values
+        self.init_tau = init_tau
+        self.d_min = d_min
+        self.delta0 = delta0
+        self.end_frac = end_frac
+        self.buf_size = buf_size
+        self.warmup = warmup
+        self.recompute_every = recompute_every
+        self.ema = ema
+        self._buf = th.empty(0)
+        self._since = 0
+        self._tau = init_tau
+        self._D = 1.0  # optimistic until first estimate
+        self._n_recomputes = 0
+
+    def _recalibrate(self) -> None:
+        buf = self._buf.sort().values
+        # candidate thresholds: pooled sample (calibration + buffer)
+        cand = th.cat([self.cal, buf]).sort().values
+        F_S = th.searchsorted(self.cal, cand, right=True).float() / len(self.cal)
+        F_T = th.searchsorted(buf, cand, right=True).float() / len(buf)
+        gap = F_S - F_T
+        i = int(th.argmax(gap))
+        self._D = float(gap[i])
+        tau_star = float(cand[i])
+        self._tau = (1 - self.ema) * self._tau + self.ema * tau_star
+        self._n_recomputes += 1
+        if self._n_recomputes % 50 == 1:
+            print(f"[ks-gate] recal#{self._n_recomputes}: tau*={tau_star:.6f}"
+                  f" tau={self._tau:.6f} D={self._D:.3f}"
+                  f"{' (gate OFF)' if self._D < self.d_min else ''}",
+                  flush=True)
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        s = self.score_fn(obs_tensor).cpu().float()
+        self._buf = th.cat([self._buf, s])[-self.buf_size:]
+        self._since += len(s)
+        if len(self._buf) >= self.warmup and self._since >= self.recompute_every:
+            self._recalibrate()
+            self._since = 0
+        if len(self._buf) >= self.warmup and self._D < self.d_min:
+            return th.zeros(obs_tensor.shape[0], dtype=th.bool)
+        tau = self._tau if len(self._buf) >= self.warmup else self.init_tau
+        return (s <= tau) & (th.rand(obs_tensor.shape[0]) < p)
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

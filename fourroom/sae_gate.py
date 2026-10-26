@@ -79,7 +79,7 @@ def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
         a = h.flatten(1)
         return ((sae(a) - a) ** 2).mean(-1)
 
-    return score_fn, tau_r
+    return score_fn, tau_r, rec_cal
 
 
 def build_said_gate(teacher, src_env_id: str, q: float, ego: bool,

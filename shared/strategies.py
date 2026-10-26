@@ -123,6 +123,46 @@ class RateGateStrategy:
         return in_dist & (th.rand(obs_tensor.shape[0]) < p)
 
 
+class ClipGateStrategy:
+    """Absolute threshold with rate GUARDRAILS: tau = the fixed init_tau
+    clipped into [quantile(rate_lo), quantile(rate_hi)] of a rolling buffer
+    of recent target scores.
+
+    Motivation (saerate 3-seed result): pure rate-targeting pins the
+    volume but forces advice onto relatively-ID-yet-actually-OOD states
+    when nothing truly ID is around -- the fixed gate's fast seeds owed
+    their speed to ABSOLUTE ID-ness, not volume. Here the absolute tau
+    stays in charge except when it would starve (<rate_lo open) or blow
+    out (>rate_hi open). lower-is-ID scores only (recon error)."""
+
+    def __init__(self, score_fn, init_tau: float, rate_lo: float = 0.01,
+                 rate_hi: float = 0.10, delta0: float = 1.0,
+                 end_frac: float = 0.5, buf_size: int = 20000,
+                 warmup: int = 2048) -> None:
+        self.score_fn = score_fn
+        self.init_tau = init_tau
+        self.rate_lo = rate_lo
+        self.rate_hi = rate_hi
+        self.delta0 = delta0
+        self.end_frac = end_frac
+        self.buf_size = buf_size
+        self.warmup = warmup
+        self._buf = th.empty(0)
+
+    def _tau(self) -> float:
+        if len(self._buf) < self.warmup:
+            return self.init_tau
+        lo = float(th.quantile(self._buf, self.rate_lo))
+        hi = float(th.quantile(self._buf, self.rate_hi))
+        return min(max(self.init_tau, lo), hi)
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        s = self.score_fn(obs_tensor).cpu().float()
+        self._buf = th.cat([self._buf, s])[-self.buf_size:]
+        return (s <= self._tau()) & (th.rand(obs_tensor.shape[0]) < p)
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument(
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
-                 "sae", "saerate", "said"],
+                 "sae", "saerate", "saeclip", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -70,6 +70,13 @@ def main() -> None:
     parser.add_argument("--sae-rate", type=float, default=0.05,
                         help="saerate: target gate-open fraction (running "
                              "quantile of recent target recon errors)")
+    parser.add_argument("--sae-tau-mult", type=float, default=2.0,
+                        help="sae/saeclip: gap-rule multiplier on the "
+                             "p99.9 calibration recon error")
+    parser.add_argument("--sae-rate-lo", type=float, default=0.01,
+                        help="saeclip: min gate-open fraction guardrail")
+    parser.add_argument("--sae-rate-hi", type=float, default=0.10,
+                        help="saeclip: max gate-open fraction guardrail")
     parser.add_argument("--gap-no-coin", action="store_true",
                         help="gap: drop the delta(t) coin (the entropy "
                              "condition self-anneals)")
@@ -116,10 +123,10 @@ def main() -> None:
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
-                           "said"):
+                           "saeclip", "said"):
         from shared.strategies import (
-            AAStrategy, EBTLStrategy, GapStrategy, JSRLStrategy,
-            RateGateStrategy, ScoreGateStrategy)
+            AAStrategy, ClipGateStrategy, EBTLStrategy, GapStrategy,
+            JSRLStrategy, RateGateStrategy, ScoreGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         if args.oracle_teacher:
@@ -138,12 +145,25 @@ def main() -> None:
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r = build_sae_gate(
                 teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
-                layer=args.sae_layer)
+                layer=args.sae_layer, tau_mult=args.sae_tau_mult)
             print(f"[paper-student] sae gate [{args.sae_layer}] "
                   f"tau_r={tau_r:.4f} (q={ebtl_q})")
             strategy = ScoreGateStrategy(score_fn, tau_r, higher_is_id=False,
                                          delta0=args.delta0,
                                          end_frac=args.end_frac)
+        elif args.transfer == "saeclip":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_r = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer, tau_mult=args.sae_tau_mult)
+            print(f"[paper-student] CLIPPED sae gate [{args.sae_layer}] "
+                  f"tau_r={tau_r:.4f} guardrails "
+                  f"[{args.sae_rate_lo}, {args.sae_rate_hi}]")
+            strategy = ClipGateStrategy(score_fn, init_tau=tau_r,
+                                        rate_lo=args.sae_rate_lo,
+                                        rate_hi=args.sae_rate_hi,
+                                        delta0=args.delta0,
+                                        end_frac=args.end_frac)
         elif args.transfer == "saerate":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r = build_sae_gate(

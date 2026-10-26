@@ -23,7 +23,7 @@ LAYER_KEY = {"L1": "L1_pool400", "L2": "L2_conv512", "L3": "L3_flat576"}
 
 
 def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
-                   seed: int, layer: str = "L1"):
+                   seed: int, layer: str = "L1", tau_mult: float = 2.0):
     """Returns (score_fn, tau_r). The SAE is trained on source-rollout
     activations; tau_r mirrors the author-confirmed EBTL calibration:
     the (1-q)-quantile of recon error over the frames of SUCCESSFUL
@@ -63,10 +63,10 @@ def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
     # collapses to float noise. Use a gap rule instead: open wherever the
     # reconstruction is within 2x of the worst quality ever observed on
     # successful source frames (the ID/OOD recon gap is >5x in practice).
-    tau_r = max(float(np.quantile(rec_cal, 0.999)) * 2.0, 1e-6)
+    tau_r = max(float(np.quantile(rec_cal, 0.999)) * tau_mult, 1e-6)
     print(f"[sae-gate] calibration: {n_succ}/100 successful episodes, "
           f"{len(cal_obs)} frames, cal p99.9={np.quantile(rec_cal, 0.999):.6f}, "
-          f"tau_r={tau_r:.6f} (gap rule; q unused)")
+          f"tau_r={tau_r:.6f} (gap rule x{tau_mult:g}; q unused)")
     cnn = teacher.policy.pi_features_extractor.cnn
 
     @th.no_grad()

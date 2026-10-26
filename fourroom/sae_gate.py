@@ -104,6 +104,8 @@ def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
         print(f"[sae-gate] KS-once: {len(rec_cal)} src vs {len(tgt_obs)} tgt"
               f" frames ({ep} random episodes), tau_ks={tau_r:.6f} "
               f"D={gap[i]:.3f}")
+    else:
+        rec_tgt = None
     cnn = teacher.policy.pi_features_extractor.cnn
 
     @th.no_grad()
@@ -116,6 +118,8 @@ def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
         a = h.flatten(1)
         return ((sae(a) - a) ** 2).mean(-1)
 
+    if ks_once_env is not None:
+        return score_fn, tau_r, rec_cal, rec_tgt
     return score_fn, tau_r, rec_cal
 
 

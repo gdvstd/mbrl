@@ -47,7 +47,8 @@ def main() -> None:
     parser.add_argument(
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
-                 "sae", "saerate", "saeclip", "saeks", "saeksonce", "said"],
+                 "sae", "saerate", "saeclip", "saeks", "saeksonce",
+                 "saekfull", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -125,10 +126,11 @@ def main() -> None:
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
-                           "saeclip", "saeks", "saeksonce", "said"):
+                           "saeclip", "saeks", "saeksonce", "saekfull",
+                           "said"):
         from shared.strategies import (
-            AAStrategy, ClipGateStrategy, EBTLStrategy, GapStrategy,
-            JSRLStrategy, KSGateStrategy, RateGateStrategy,
+            AAStrategy, ClipGateStrategy, EBTLStrategy, FullKSGateStrategy,
+            GapStrategy, JSRLStrategy, KSGateStrategy, RateGateStrategy,
             ScoreGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
@@ -181,7 +183,7 @@ def main() -> None:
                                         end_frac=args.end_frac)
         elif args.transfer == "saeksonce":
             from fourroom.sae_gate import build_sae_gate
-            score_fn, tau_ks, _ = build_sae_gate(
+            score_fn, tau_ks, _, _ = build_sae_gate(
                 teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
                 layer=args.sae_layer, ks_once_env=tgt_env)
             print(f"[paper-student] KS-ONCE sae gate [{args.sae_layer}] "
@@ -190,6 +192,18 @@ def main() -> None:
                                          higher_is_id=False,
                                          delta0=args.delta0,
                                          end_frac=args.end_frac)
+        elif args.transfer == "saekfull":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_ks, rec_cal, rec_tgt = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer, ks_once_env=tgt_env)
+            print(f"[paper-student] FULL-HISTORY KS sae gate "
+                  f"[{args.sae_layer}] init tau_ks={tau_ks:.6f}, buffer "
+                  f"seeded with {len(rec_tgt)} random-target frames")
+            strategy = FullKSGateStrategy(score_fn, rec_cal, rec_tgt,
+                                          init_tau=tau_ks,
+                                          delta0=args.delta0,
+                                          end_frac=args.end_frac)
         elif args.transfer == "saeks":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r, rec_cal = build_sae_gate(

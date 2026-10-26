@@ -234,6 +234,58 @@ class KSGateStrategy:
         return (s <= tau) & (th.rand(obs_tensor.shape[0]) < p)
 
 
+class FullKSGateStrategy:
+    """Full-history KS gate (ablation arm): same two-sample argmax as
+    KSGateStrategy, but the target buffer GROWS WITHOUT BOUND and is
+    seeded with the pre-training masked-random target sample.
+
+    Rationale: recon scores are values of a FROZEN teacher+SAE, so
+    samples never go stale -- only their visitation weighting evolves,
+    which the pi-invariance of the argmax absorbs. The seed sample
+    removes the cold-start bias; unbounded accumulation keeps deep-OOD
+    coverage even after the student's visitation concentrates on its own
+    solution paths. No window, no EMA, no d_min -- growing n
+    self-stabilizes tau."""
+
+    def __init__(self, score_fn, cal_scores, seed_scores, init_tau: float,
+                 delta0: float = 1.0, end_frac: float = 0.5,
+                 recompute_every: int = 2048) -> None:
+        self.score_fn = score_fn
+        self.cal = th.as_tensor(cal_scores, dtype=th.float32).sort().values
+        self._chunks = [th.as_tensor(seed_scores, dtype=th.float32)]
+        self._tau = init_tau  # = the KS-once value of the seed sample
+        self.delta0 = delta0
+        self.end_frac = end_frac
+        self.recompute_every = recompute_every
+        self._since = 0
+        self._n_recomputes = 0
+
+    def _recalibrate(self) -> None:
+        buf = th.cat(self._chunks).sort().values
+        self._chunks = [buf]  # keep stored sorted/compact
+        cand = th.cat([self.cal, buf]).sort().values
+        F_S = th.searchsorted(self.cal, cand, right=True).float() / len(self.cal)
+        F_T = th.searchsorted(buf, cand, right=True).float() / len(buf)
+        gap = F_S - F_T
+        i = int(th.argmax(gap))
+        self._tau = float(cand[i])
+        self._n_recomputes += 1
+        if self._n_recomputes % 50 == 1:
+            print(f"[ksfull-gate] recal#{self._n_recomputes}: "
+                  f"tau={self._tau:.6f} D={float(gap[i]):.3f} "
+                  f"n_buf={len(buf)}", flush=True)
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        s = self.score_fn(obs_tensor).cpu().float()
+        self._chunks.append(s)
+        self._since += len(s)
+        if self._since >= self.recompute_every:
+            self._recalibrate()
+            self._since = 0
+        return (s <= self._tau) & (th.rand(obs_tensor.shape[0]) < p)
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

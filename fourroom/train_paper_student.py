@@ -47,7 +47,7 @@ def main() -> None:
     parser.add_argument(
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
-                 "sae", "said"],
+                 "sae", "saerate", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -67,6 +67,9 @@ def main() -> None:
                         help="gap: min normalized student entropy to advise")
     parser.add_argument("--sae-layer", choices=["L1", "L2", "L3"],
                         default="L1", help="sae: which activation layer")
+    parser.add_argument("--sae-rate", type=float, default=0.05,
+                        help="saerate: target gate-open fraction (running "
+                             "quantile of recent target recon errors)")
     parser.add_argument("--gap-no-coin", action="store_true",
                         help="gap: drop the delta(t) coin (the entropy "
                              "condition self-anneals)")
@@ -112,10 +115,11 @@ def main() -> None:
                         frozen += 1
             print(f"[paper-student] froze conv towers ({frozen} tensors)")
         print(f"[paper-student] initialized from teacher: {teacher_path}")
-    elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "said"):
+    elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
+                           "said"):
         from shared.strategies import (
             AAStrategy, EBTLStrategy, GapStrategy, JSRLStrategy,
-            ScoreGateStrategy)
+            RateGateStrategy, ScoreGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         if args.oracle_teacher:
@@ -140,6 +144,18 @@ def main() -> None:
             strategy = ScoreGateStrategy(score_fn, tau_r, higher_is_id=False,
                                          delta0=args.delta0,
                                          end_frac=args.end_frac)
+        elif args.transfer == "saerate":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_r = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer)
+            print(f"[paper-student] RATE-targeted sae gate "
+                  f"[{args.sae_layer}] rate={args.sae_rate} "
+                  f"init_tau={tau_r:.4f}")
+            strategy = RateGateStrategy(score_fn, args.sae_rate,
+                                        init_tau=tau_r, higher_is_id=False,
+                                        delta0=args.delta0,
+                                        end_frac=args.end_frac)
         elif args.transfer == "said":
             from fourroom.sae_gate import build_said_gate
             score_fn, tau_c = build_said_gate(

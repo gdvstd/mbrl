@@ -78,6 +78,51 @@ class ScoreGateStrategy:
         return in_dist & (th.rand(obs_tensor.shape[0]) < p)
 
 
+class RateGateStrategy:
+    """Rate-targeted score gate: instead of a fixed absolute threshold,
+    tau tracks the `rate`-quantile of a rolling buffer of recent TARGET
+    scores, so the gate opens on ~`rate` of coin-fired steps regardless of
+    the score's absolute scale.
+
+    Motivation (10-seed advlog analysis): the fixed gap-rule tau is
+    brittle across seeds -- the same multiplier lands on either side of
+    the target recon distribution, producing advice starvation (altgoal
+    stragglers, 3-4%) or blowout (locked seeds at ~75% ~= AA). Rank-based
+    gating keeps the selection (most-ID states first) while pinning the
+    volume. Coin delta(t) is unchanged; until `warmup` scores accumulate
+    the fixed `init_tau` is used.
+    """
+
+    def __init__(self, score_fn, rate: float, init_tau: float,
+                 higher_is_id: bool = True, delta0: float = 1.0,
+                 end_frac: float = 0.5, buf_size: int = 20000,
+                 warmup: int = 2048) -> None:
+        self.score_fn = score_fn
+        self.rate = rate
+        self.init_tau = init_tau
+        self.higher_is_id = higher_is_id
+        self.delta0 = delta0
+        self.end_frac = end_frac
+        self.buf_size = buf_size
+        self.warmup = warmup
+        self._buf = th.empty(0)
+
+    def _tau(self) -> float:
+        if len(self._buf) < self.warmup:
+            return self.init_tau
+        # open on the `rate` most-ID fraction of recent target states
+        q = 1.0 - self.rate if self.higher_is_id else self.rate
+        return float(th.quantile(self._buf, q))
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        s = self.score_fn(obs_tensor).cpu().float()
+        self._buf = th.cat([self._buf, s])[-self.buf_size:]
+        tau = self._tau()
+        in_dist = (s >= tau) if self.higher_is_id else (s <= tau)
+        return in_dist & (th.rand(obs_tensor.shape[0]) < p)
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

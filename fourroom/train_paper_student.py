@@ -49,7 +49,7 @@ def main() -> None:
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
                  "sae", "saerate", "saeclip", "saeks", "saeksonce",
                  "saekfull", "ksent", "ksdis", "kssucc", "ksentsucc",
-                 "kutil", "said"],
+                 "kutil", "ksbudget", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -129,7 +129,7 @@ def main() -> None:
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
                            "saeclip", "saeks", "saeksonce", "saekfull",
                            "ksent", "ksdis", "kssucc", "ksentsucc", "kutil",
-                           "said"):
+                           "ksbudget", "said"):
         from shared.strategies import (
             AAStrategy, ClipGateStrategy, EBTLStrategy, FullKSGateStrategy,
             GapStrategy, JSRLStrategy, KSGateStrategy, RateGateStrategy,
@@ -223,6 +223,20 @@ def main() -> None:
                                       end_frac=args.end_frac, need=need,
                                       eta=args.gap_eta, kappa=0.5,
                                       coin=coin)
+        elif args.transfer == "ksbudget":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_ks, _, _ = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer, ks_once_env=tgt_env)
+            print(f"[paper-student] BUDGETED-KS gate [{args.sae_layer}] "
+                  f"tau_KS(once)={tau_ks:.6f} floor b={args.sae_rate_lo} "
+                  f"(no cap)")
+            # ClipGateStrategy with the cap disabled (rate_hi=1.0) is
+            # exactly tau_eff = max(tau_KS, Q_recent(b))
+            strategy = ClipGateStrategy(score_fn, init_tau=tau_ks,
+                                        rate_lo=args.sae_rate_lo,
+                                        rate_hi=1.0, delta0=args.delta0,
+                                        end_frac=args.end_frac)
         elif args.transfer == "kutil":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau0, _ = build_sae_gate(

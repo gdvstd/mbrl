@@ -329,6 +329,97 @@ class FullKSGateStrategy:
         return (s <= self._tau) & (th.rand(obs_tensor.shape[0]) < p)
 
 
+class UtilGateStrategy:
+    """Utility-anchored (advantage-calibrated) gate.
+
+    Replaces the latent ID/OOD mixture as the MECHANISM: the gate depth is
+    tuned online by the measured value of advice itself.
+      * tau_eff = max(tau0, Q_recent(q_t)): tau0 = the source-tube gap-rule
+        threshold (certainly-helpful zone), q_t = open-fraction depth into
+        the recon-ranked list of recent visitation.
+      * the coin advises only `delta` of gate-open steps, so the open-but-
+        not-advised steps form a RANDOMIZED control group (same state
+        distribution; critic bias cancels).
+      * after each rollout, MixedPolicyPPO calls update_feedback(GAE
+        advantages); every `update_every` rollouts the controller compares
+        Delta = mean A(advised) - mean A(open & not advised) and expands
+        (Delta>0) or contracts (Delta<0) q_t multiplicatively.
+    Equilibrium sits where the marginal advantage of deeper advice crosses
+    zero (precision decays monotonically with rank depth, per the oracle
+    screen), so no mixture assumptions (P_ID=P_S etc.) are needed."""
+
+    def __init__(self, score_fn, init_tau: float, q_init: float = 0.01,
+                 q_min: float = 0.005, q_max: float = 0.25,
+                 eta: float = 0.25, update_every: int = 10,
+                 min_n: int = 50, delta0: float = 0.8,
+                 end_frac: float = 0.5, buf_size: int = 20000,
+                 warmup: int = 2048) -> None:
+        self.score_fn = score_fn
+        self.init_tau = init_tau
+        self.q = q_init
+        self.q_min, self.q_max = q_min, q_max
+        self.eta = eta
+        self.update_every = update_every
+        self.min_n = min_n
+        self.delta0 = delta0
+        self.end_frac = end_frac
+        self.buf_size = buf_size
+        self.warmup = warmup
+        self._buf = th.empty(0)
+        self._roll_open: list = []
+        self._roll_adv: list = []
+        self._win_advised: list = []
+        self._win_control: list = []
+        self._fb_rollouts = 0
+        self._n_updates = 0
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        s = self.score_fn(obs_tensor).cpu().float()
+        self._buf = th.cat([self._buf, s])[-self.buf_size:]
+        if len(self._buf) >= self.warmup:
+            tau = max(self.init_tau, float(th.quantile(self._buf, self.q)))
+        else:
+            tau = self.init_tau
+        open_ = s <= tau
+        advised = open_ & (th.rand(obs_tensor.shape[0]) < p)
+        self._roll_open.append(open_.numpy())
+        self._roll_adv.append(advised.numpy())
+        return advised
+
+    def update_feedback(self, advantages) -> None:
+        """Called by MixedPolicyPPO after compute_returns_and_advantage;
+        `advantages` is the (n_steps, n_envs)-raveled GAE array, aligned
+        with the per-step masks accumulated during this rollout."""
+        import numpy as np
+        if not self._roll_open:
+            return
+        open_ = np.stack(self._roll_open).ravel()
+        adv_m = np.stack(self._roll_adv).ravel()
+        self._roll_open.clear()
+        self._roll_adv.clear()
+        if len(open_) != len(advantages):
+            return  # alignment lost (shouldn't happen); skip this rollout
+        self._win_advised.extend(advantages[adv_m].tolist())
+        self._win_control.extend(advantages[open_ & ~adv_m].tolist())
+        self._fb_rollouts += 1
+        if self._fb_rollouts < self.update_every:
+            return
+        self._fb_rollouts = 0
+        na, nc = len(self._win_advised), len(self._win_control)
+        if na >= self.min_n and nc >= self.min_n:
+            delta = (float(np.mean(self._win_advised))
+                     - float(np.mean(self._win_control)))
+            self.q = min(self.q_max, self.q * (1 + self.eta)) \
+                if delta > 0 else max(self.q_min, self.q / (1 + self.eta))
+            self._n_updates += 1
+            if self._n_updates % 10 == 1:
+                print(f"[util-gate] upd#{self._n_updates}: Delta={delta:+.4f}"
+                      f" (n={na}/{nc}) -> q={self.q:.4f}", flush=True)
+        self._win_advised.clear()
+        self._win_control.clear()
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

@@ -159,6 +159,11 @@ class MixedPolicyMaskablePPO(MaskablePPO):
             values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        if hasattr(self.strategy, "update_feedback"):
+            # utility-anchored gates consume the realized GAE advantages of
+            # this rollout (aligned raveled order) to recalibrate online
+            self.strategy.update_feedback(
+                rollout_buffer.advantages.copy().ravel())
         if self.advlog_path is not None:
             # (n_steps, n_envs) flattens in the same order as the buffer
             self._advlog["phi"].append(np.stack(log_phi).ravel())

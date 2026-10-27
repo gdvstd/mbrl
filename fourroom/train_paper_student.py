@@ -49,7 +49,7 @@ def main() -> None:
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
                  "sae", "saerate", "saeclip", "saeks", "saeksonce",
                  "saekfull", "ksent", "ksdis", "kssucc", "ksentsucc",
-                 "said"],
+                 "kutil", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -128,11 +128,12 @@ def main() -> None:
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
                            "saeclip", "saeks", "saeksonce", "saekfull",
-                           "ksent", "ksdis", "kssucc", "ksentsucc", "said"):
+                           "ksent", "ksdis", "kssucc", "ksentsucc", "kutil",
+                           "said"):
         from shared.strategies import (
             AAStrategy, ClipGateStrategy, EBTLStrategy, FullKSGateStrategy,
             GapStrategy, JSRLStrategy, KSGateStrategy, RateGateStrategy,
-            ScoreGateStrategy)
+            ScoreGateStrategy, UtilGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         if args.oracle_teacher:
@@ -222,6 +223,16 @@ def main() -> None:
                                       end_frac=args.end_frac, need=need,
                                       eta=args.gap_eta, kappa=0.5,
                                       coin=coin)
+        elif args.transfer == "kutil":
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau0, _ = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer, tau_mult=args.sae_tau_mult)
+            print(f"[paper-student] UTILITY-calibrated gate "
+                  f"[{args.sae_layer}] tau0(tube)={tau0:.6f} q_init=0.01 "
+                  f"delta0=0.8 (0.2 holdout = control group)")
+            strategy = UtilGateStrategy(score_fn, init_tau=tau0,
+                                        end_frac=args.end_frac)
         elif args.transfer == "saeks":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r, rec_cal = build_sae_gate(

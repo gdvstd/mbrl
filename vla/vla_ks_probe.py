@@ -79,6 +79,13 @@ def main() -> None:
     ap.add_argument("--frames-per-task", type=int, default=600)
     ap.add_argument("--stride", type=int, default=3,
                     help="record every k-th rollout step")
+    ap.add_argument("--policy", choices=["teacher", "random"],
+                    default="teacher",
+                    help="rollout policy for F_T: 'random' = uniform "
+                         "actions (start-of-training student proxy)")
+    ap.add_argument("--ref-npz", default=None,
+                    help="prior probe npz; also report open rates at its "
+                         "tau (the teacher-rollout-calibrated threshold)")
     ap.add_argument("--out", default="runs_vla/ks_probe_vla.npz")
     a = ap.parse_args()
     device = "cuda"
@@ -104,7 +111,8 @@ def main() -> None:
     print(f"[src] F_S: {len(rec_S)} held-out seen demo frames, "
           f"median {np.median(rec_S):.4f}", flush=True)
 
-    # ---- target side: teacher rollouts over ALL tasks
+    # ---- target side: rollouts over ALL tasks with the chosen policy
+    rng = np.random.default_rng(0)
     rec_T, phi_T, tid_T = [], [], []
     for tid in list(SEEN_TASKS) + list(UNSEEN_TASKS):
         env = make_env(tid)
@@ -121,7 +129,10 @@ def main() -> None:
                     rec_T.append(recon(h[None])[0])
                     phi_T.append(phi)
                     tid_T.append(tid)
-                obs, r, done, _ = env.step(act(model, processor, obs, lang))
+                action = (rng.uniform(-1, 1, 7)
+                          if a.policy == "random"
+                          else act(model, processor, obs, lang))
+                obs, r, done, _ = env.step(action)
                 if done:
                     break
         env.close()
@@ -133,6 +144,15 @@ def main() -> None:
     phi_T = np.array(phi_T)
     tid_T = np.array(tid_T)
     seen = np.isin(tid_T, SEEN_TASKS)
+
+    # ---- starvation check at a reference (teacher-rollout) tau
+    if a.ref_npz and os.path.exists(a.ref_npz):
+        ref_tau = float(np.load(a.ref_npz)["tau"])
+        o = rec_T <= ref_tau
+        print(f"\n== starvation at reference tau={ref_tau:.4f} "
+              f"(policy={a.policy}) ==")
+        print(f"open | seen  : {o[np.isin(tid_T, SEEN_TASKS)].mean():.1%}")
+        print(f"open | unseen: {o[~np.isin(tid_T, SEEN_TASKS)].mean():.1%}")
 
     # ---- KS threshold + separation quality
     tau, D = ks_tau(rec_S, rec_T)

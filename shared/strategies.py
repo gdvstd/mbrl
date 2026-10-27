@@ -185,10 +185,23 @@ class KSGateStrategy:
                  d_min: float = 0.1, delta0: float = 1.0,
                  end_frac: float = 0.5, buf_size: int = 20000,
                  warmup: int = 2048, recompute_every: int = 512,
-                 ema: float = 0.5) -> None:
+                 ema: float = 0.5, need: str = "none", eta: float = 0.5,
+                 kappa: float = 0.5, coin: str = "clock") -> None:
         self.score_fn = score_fn
         self.cal = th.as_tensor(cal_scores, dtype=th.float32).sort().values
         self.init_tau = init_tau
+        # NEED term ("entropy": student masked entropy >= eta*max;
+        # "disagree": pi_S(teacher argmax action) <= kappa) and coin mode
+        # ("clock" = linear decay; "success" = delta0*(1 - recent train
+        # success rate), per-seed adaptive). student_policy / model are
+        # attached after the model is built; until then NEED is inactive
+        # and the clock coin is used.
+        self.need = need
+        self.eta = eta
+        self.kappa = kappa
+        self.coin = coin
+        self.student_policy = None
+        self.model = None
         self.d_min = d_min
         self.delta0 = delta0
         self.end_frac = end_frac
@@ -220,8 +233,18 @@ class KSGateStrategy:
                   f"{' (gate OFF)' if self._D < self.d_min else ''}",
                   flush=True)
 
-    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
-        p = _linear_decay(self.delta0, self.end_frac, progress)
+    def _coin_p(self, progress: float) -> float:
+        if self.coin == "success" and self.model is not None:
+            buf = self.model.ep_info_buffer
+            if buf is not None and len(buf) >= 10:
+                succ = sum(e["r"] > 0 for e in buf) / len(buf)
+                return self.delta0 * (1.0 - succ)
+            return self.delta0
+        return _linear_decay(self.delta0, self.end_frac, progress)
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress,
+                      action_masks=None):
+        p = self._coin_p(progress)
         s = self.score_fn(obs_tensor).cpu().float()
         self._buf = th.cat([self._buf, s])[-self.buf_size:]
         self._since += len(s)
@@ -231,7 +254,27 @@ class KSGateStrategy:
         if len(self._buf) >= self.warmup and self._D < self.d_min:
             return th.zeros(obs_tensor.shape[0], dtype=th.bool)
         tau = self._tau if len(self._buf) >= self.warmup else self.init_tau
-        return (s <= tau) & (th.rand(obs_tensor.shape[0]) < p)
+        gate = (s <= tau) & (th.rand(obs_tensor.shape[0]) < p)
+        if self.need != "none" and self.student_policy is not None \
+                and gate.any():
+            with th.no_grad():
+                s_dist = self.student_policy.get_distribution(
+                    obs_tensor, action_masks=action_masks)
+                if self.need == "entropy":
+                    ent = s_dist.entropy().cpu()
+                    if action_masks is not None:
+                        n_valid = th.as_tensor(action_masks).sum(-1).clamp(min=2)
+                    else:
+                        n_valid = th.full_like(ent, 7)
+                    gate &= ent / th.log(n_valid.float()) >= self.eta
+                else:  # disagree
+                    t_dist = teacher.distribution(
+                        obs_tensor, action_masks=action_masks)
+                    a_T = t_dist.distribution.probs.argmax(-1)
+                    p_agree = s_dist.distribution.probs.gather(
+                        -1, a_T.unsqueeze(-1)).squeeze(-1).cpu()
+                    gate &= p_agree <= self.kappa
+        return gate
 
 
 class FullKSGateStrategy:

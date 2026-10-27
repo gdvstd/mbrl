@@ -48,7 +48,8 @@ def main() -> None:
         "--transfer",
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
                  "sae", "saerate", "saeclip", "saeks", "saeksonce",
-                 "saekfull", "said"],
+                 "saekfull", "ksent", "ksdis", "kssucc", "ksentsucc",
+                 "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -127,7 +128,7 @@ def main() -> None:
         print(f"[paper-student] initialized from teacher: {teacher_path}")
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
                            "saeclip", "saeks", "saeksonce", "saekfull",
-                           "said"):
+                           "ksent", "ksdis", "kssucc", "ksentsucc", "said"):
         from shared.strategies import (
             AAStrategy, ClipGateStrategy, EBTLStrategy, FullKSGateStrategy,
             GapStrategy, JSRLStrategy, KSGateStrategy, RateGateStrategy,
@@ -204,6 +205,23 @@ def main() -> None:
                                           init_tau=tau_ks,
                                           delta0=args.delta0,
                                           end_frac=args.end_frac)
+        elif args.transfer in ("ksent", "ksdis", "kssucc", "ksentsucc"):
+            from fourroom.sae_gate import build_sae_gate
+            score_fn, tau_r, rec_cal = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer)
+            need = {"ksent": "entropy", "ksdis": "disagree",
+                    "kssucc": "none", "ksentsucc": "entropy"}[args.transfer]
+            coin = ("success" if args.transfer in ("kssucc", "ksentsucc")
+                    else "clock")
+            print(f"[paper-student] KS gate variant {args.transfer}: "
+                  f"need={need} (eta={args.gap_eta}, kappa=0.5) coin={coin}")
+            strategy = KSGateStrategy(score_fn, rec_cal, init_tau=tau_r,
+                                      d_min=args.sae_ks_dmin,
+                                      delta0=args.delta0,
+                                      end_frac=args.end_frac, need=need,
+                                      eta=args.gap_eta, kappa=0.5,
+                                      coin=coin)
         elif args.transfer == "saeks":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau_r, rec_cal = build_sae_gate(
@@ -244,6 +262,9 @@ def main() -> None:
             advlog_scenario=args.scenario)
         if args.transfer == "gap":
             strategy.student_policy = model.policy
+        if args.transfer in ("ksent", "ksdis", "kssucc", "ksentsucc"):
+            strategy.student_policy = model.policy
+            strategy.model = model
         print(f"[paper-student] guidance teacher: {teacher_path}")
     elif args.transfer == "ksrl":
         from fourroom.paper_ksrl import KickstartMaskablePPO

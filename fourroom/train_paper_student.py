@@ -229,13 +229,15 @@ def main() -> None:
                 teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
                 layer=args.sae_layer, ks_once_env=tgt_env)
             print(f"[paper-student] BUDGETED-KS gate [{args.sae_layer}] "
-                  f"tau_KS(once)={tau_ks:.6f} floor b={args.sae_rate_lo} "
-                  f"(no cap)")
-            # ClipGateStrategy with the cap disabled (rate_hi=1.0) is
-            # exactly tau_eff = max(tau_KS, Q_recent(b))
+                  f"tau_KS(once)={tau_ks:.6f} rails "
+                  f"[{args.sae_rate_lo}, {args.sae_rate_hi}]")
+            # rate_hi=1.0 (default via run scripts) disables the cap:
+            # tau_eff = max(tau_KS, Q_recent(b)). A finite rate_hi gives
+            # the KS-anchored twin of saeclip.
             strategy = ClipGateStrategy(score_fn, init_tau=tau_ks,
                                         rate_lo=args.sae_rate_lo,
-                                        rate_hi=1.0, delta0=args.delta0,
+                                        rate_hi=args.sae_rate_hi,
+                                        delta0=args.delta0,
                                         end_frac=args.end_frac)
         elif args.transfer == "kutil":
             from fourroom.sae_gate import build_sae_gate

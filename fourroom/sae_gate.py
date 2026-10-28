@@ -123,6 +123,68 @@ def build_sae_gate(teacher, src_env_id: str, q: float, ego: bool,
     return score_fn, tau_r, rec_cal
 
 
+def measure_random_baseline(score_fn, teacher, tgt_env_id: str, tau: float,
+                            ego: bool, seed: int, episodes: int = 40):
+    """pi_0: per-EPISODE ID-occupancy of a masked-random policy in the
+    target env (the chance baseline the ksho handover must exceed).
+    Returns (mean, var, n_episodes)."""
+    import gymnasium as gym
+    from fourroom.fourroom_env import action_mask
+    from fourroom.paper_common import _wrap
+
+    rng = np.random.default_rng(seed + 9900)
+    kw = {"agent_view_size": 9} if ego else {}
+    env = _wrap(gym.make(tgt_env_id, **kw), ego=ego)
+    fracs = []
+    for ep in range(episodes):
+        obs, _ = env.reset(seed=seed + 9900 + ep)
+        vals = []
+        while True:
+            ot, _ = teacher.policy.obs_to_tensor(obs)
+            vals.append(float(score_fn(ot)[0]))
+            m = action_mask(env)
+            obs, r, te, tr, _ = env.step(
+                int(rng.choice(np.flatnonzero(np.asarray(m)))))
+            if te or tr:
+                break
+        fracs.append(float(np.mean(np.array(vals) <= tau)))
+    env.close()
+    mean, var = float(np.mean(fracs)), float(np.var(fracs, ddof=1))
+    print(f"[ksho] pi_0 = {mean:.3f} (var {var:.4f}, {episodes} random "
+          f"episodes, episode-balanced)")
+    return mean, var, episodes
+
+
+def measure_rho_T(score_fn, teacher, tgt_env_id: str, tau: float, ego: bool,
+                  seed: int, episodes: int = 20) -> float:
+    """Teacher-driving-in-TARGET ID occupancy: the fraction of states the
+    teacher visits (stochastic) in the target env whose recon is within
+    its own competence boundary tau. Reference level for the ksho
+    handover (student is 'self-sufficient' at gamma * rho_T)."""
+    import gymnasium as gym
+    from fourroom.fourroom_env import action_mask
+    from fourroom.paper_common import _wrap
+    from fourroom.sae_probe import teacher_actor
+
+    kw = {"agent_view_size": 9} if ego else {}
+    env = _wrap(gym.make(tgt_env_id, **kw), ego=ego)
+    act = teacher_actor(teacher)
+    vals = []
+    for ep in range(episodes):
+        obs, _ = env.reset(seed=seed + 8800 + ep)
+        while True:
+            ot, _ = teacher.policy.obs_to_tensor(obs)
+            vals.append(float(score_fn(ot)[0]))
+            obs, r, te, tr, _ = env.step(act(obs, action_mask(env)))
+            if te or tr:
+                break
+    env.close()
+    rho = float(np.mean(np.array(vals) <= tau))
+    print(f"[ksho] rho_T = {rho:.3f} (teacher-in-target ID occupancy, "
+          f"{len(vals)} frames / {episodes} eps)")
+    return rho
+
+
 def build_said_gate(teacher, src_env_id: str, q: float, ego: bool,
                     seed: int):
     """SAID-act gate: mean over the three layers of the cosine between the

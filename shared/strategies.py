@@ -420,6 +420,110 @@ class UtilGateStrategy:
         self._win_control.clear()
 
 
+class KSHOStrategy:
+    """Reachability-HANDOVER gate (v2, episode statistics).
+
+        advise  <=>  coin  AND  ( not handover   OR   r(s) <= tau )
+
+    * tau = MAX recon error over stochastic-SUCCESS calibration rollouts
+      (recoverable-basin boundary, no multiplier).
+    * pi_0 = per-EPISODE ID-occupancy of a masked-RANDOM policy in the
+      target (calibration baseline; episode-balanced -- frame weighting
+      inverts under termination: competent policies finish ID episodes
+      fast and leave few ID frames).
+    * pi_t = per-episode ID-occupancy of SENTINEL probe envs stepped by
+      the CURRENT student policy with no advice, outside the PPO buffer
+      (training stays bit-identical to AA/EBTL baselines).
+    * HANDOVER (one-way) when the one-sided Welch statistic
+          z = (pi_t - pi_0) / sqrt(s_t^2/M + s_0^2/N0)  >=  z_star
+      holds on `consec_needed` consecutive NON-overlapping windows of M
+      probe episodes. z_star is set from a run-level false-trigger
+      budget: with K windows per run, P(false handover) ~ K * alpha^2;
+      z_star = 2.5 (alpha ~ .006) keeps it <~1% for K <= ~250.
+    Phase 1 = pure AA (near-random student gains more from the biased
+    teacher than from undirected exploration); phase 2 = strict ID gate."""
+
+    def __init__(self, score_fn, tau: float, base_mean: float,
+                 base_var: float, base_n: int, probe_env_fn=None,
+                 mask_fn=None, n_probe: int = 4, z_star: float = 2.5,
+                 ep_window: int = 20, consec_needed: int = 2,
+                 delta0: float = 1.0, end_frac: float = 0.5,
+                 seed: int = 0) -> None:
+        self.score_fn = score_fn
+        self.tau = tau
+        self.base_mean = base_mean
+        self.base_var = base_var
+        self.base_n = max(base_n, 2)
+        self.z_star = z_star
+        self.ep_window = ep_window
+        self.consec_needed = consec_needed
+        self.delta0 = delta0
+        self.end_frac = end_frac
+        self.student_policy = None  # attached after the model is built
+        self._mask_fn = mask_fn
+        self._probe, self._probe_obs = [], []
+        self._cur = []  # per-probe-env current-episode ID bools
+        if probe_env_fn is not None:
+            for i in range(n_probe):
+                env = probe_env_fn()
+                obs, _ = env.reset(seed=seed + 7700 + i)
+                self._probe.append(env)
+                self._probe_obs.append(obs)
+                self._cur.append([])
+        self._ep_fracs: list = []  # completed probe episodes (window)
+        self._consec = 0
+        self.handover = False
+        self._n_checks = 0
+
+    def _check(self) -> None:
+        import numpy as np
+        x = np.array(self._ep_fracs)
+        self._ep_fracs = []  # non-overlapping windows
+        m, s2 = float(x.mean()), float(x.var(ddof=1)) if len(x) > 1 else 0.0
+        se = (s2 / len(x) + self.base_var / self.base_n) ** 0.5
+        z = (m - self.base_mean) / max(se, 1e-8)
+        self._consec = self._consec + 1 if z >= self.z_star else 0
+        if self._consec >= self.consec_needed:
+            self.handover = True
+        self._n_checks += 1
+        print(f"[ksho] check#{self._n_checks}: pi_t={m:.3f} "
+              f"pi_0={self.base_mean:.3f} z={z:+.2f} "
+              f"consec={self._consec} handover={self.handover}",
+              flush=True)
+
+    @th.no_grad()
+    def _step_probe(self) -> None:
+        import numpy as np
+        if not self._probe or self.student_policy is None:
+            return
+        obs = np.stack(self._probe_obs)
+        masks = np.stack([self._mask_fn(e) for e in self._probe])
+        actions, _ = self.student_policy.predict(obs, action_masks=masks,
+                                                 deterministic=False)
+        ot, _ = self.student_policy.obs_to_tensor(obs)
+        is_id = (self.score_fn(ot).cpu().numpy() <= self.tau)
+        for i, env in enumerate(self._probe):
+            self._cur[i].append(bool(is_id[i]))
+            o, r, te, tr, _ = env.step(int(actions[i]))
+            if te or tr:
+                self._ep_fracs.append(
+                    sum(self._cur[i]) / max(len(self._cur[i]), 1))
+                self._cur[i] = []
+                o, _ = env.reset()
+            self._probe_obs[i] = o
+        if not self.handover and len(self._ep_fracs) >= self.ep_window:
+            self._check()
+
+    def guidance_mask(self, teacher, obs_tensor, episode_steps, progress):
+        self._step_probe()
+        p = _linear_decay(self.delta0, self.end_frac, progress)
+        coin = th.rand(obs_tensor.shape[0]) < p
+        if not self.handover:
+            return coin  # phase 1: AA (teacher leads exploration)
+        s = self.score_fn(obs_tensor).cpu().float()
+        return (s <= self.tau) & coin
+
+
 class GapStrategy:
     """Competence-GAP gate: advise only where the teacher is familiar
     (phi >= tau, as in EBTL) AND the student is still uncertain (masked

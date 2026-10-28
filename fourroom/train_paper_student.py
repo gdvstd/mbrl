@@ -49,7 +49,7 @@ def main() -> None:
         choices=["scratch", "finetune", "aa", "jsrl", "ksrl", "ebtl", "gap",
                  "sae", "saerate", "saeclip", "saeks", "saeksonce",
                  "saekfull", "ksent", "ksdis", "kssucc", "ksentsucc",
-                 "kutil", "ksbudget", "said"],
+                 "kutil", "ksbudget", "ksho", "said"],
         default="scratch")
     parser.add_argument("--teacher", type=str, default=None)
     parser.add_argument("--no-freeze-cnn", action="store_true",
@@ -79,6 +79,9 @@ def main() -> None:
                         help="saeclip: min gate-open fraction guardrail")
     parser.add_argument("--sae-rate-hi", type=float, default=0.10,
                         help="saeclip: max gate-open fraction guardrail")
+    parser.add_argument("--ksho-z", type=float, default=2.5,
+                        help="ksho: one-sided Welch z for the handover "
+                             "test vs the random baseline")
     parser.add_argument("--sae-ks-dmin", type=float, default=0.1,
                         help="saeks: min KS gap D to keep the gate on")
     parser.add_argument("--gap-no-coin", action="store_true",
@@ -129,11 +132,11 @@ def main() -> None:
     elif args.transfer in ("aa", "jsrl", "ebtl", "gap", "sae", "saerate",
                            "saeclip", "saeks", "saeksonce", "saekfull",
                            "ksent", "ksdis", "kssucc", "ksentsucc", "kutil",
-                           "ksbudget", "said"):
+                           "ksbudget", "ksho", "said"):
         from shared.strategies import (
             AAStrategy, ClipGateStrategy, EBTLStrategy, FullKSGateStrategy,
-            GapStrategy, JSRLStrategy, KSGateStrategy, RateGateStrategy,
-            ScoreGateStrategy, UtilGateStrategy)
+            GapStrategy, JSRLStrategy, KSGateStrategy, KSHOStrategy,
+            RateGateStrategy, ScoreGateStrategy, UtilGateStrategy)
         from fourroom.paper_mixed_ppo import MixedPolicyMaskablePPO
 
         if args.oracle_teacher:
@@ -239,6 +242,30 @@ def main() -> None:
                                         rate_hi=args.sae_rate_hi,
                                         delta0=args.delta0,
                                         end_frac=args.end_frac)
+        elif args.transfer == "ksho":
+            import gymnasium as _gym
+            from fourroom.fourroom_env import action_mask as _amask
+            from fourroom.paper_common import _wrap as _pwrap
+            from fourroom.sae_gate import (build_sae_gate,
+                                           measure_random_baseline)
+            score_fn, _, rec_cal = build_sae_gate(
+                teacher, src_env, ebtl_q, args.ego, seed=args.seed + 3000,
+                layer=args.sae_layer)
+            tau_max = float(rec_cal.max())
+            b_mean, b_var, b_n = measure_random_baseline(
+                score_fn, teacher, tgt_env, tau_max, args.ego,
+                seed=args.seed + 3000)
+            _kw = {"agent_view_size": 9} if args.ego else {}
+            print(f"[paper-student] KSHO-v2 gate [{args.sae_layer}] "
+                  f"tau=max(cal)={tau_max:.6f} pi_0={b_mean:.3f} "
+                  f"z*={args.ksho_z} (4 sentinel probe envs, ep stats)")
+            strategy = KSHOStrategy(
+                score_fn, tau_max, b_mean, b_var, b_n,
+                probe_env_fn=lambda: _pwrap(_gym.make(tgt_env, **_kw),
+                                            ego=args.ego),
+                mask_fn=_amask, z_star=args.ksho_z,
+                delta0=args.delta0, end_frac=args.end_frac,
+                seed=args.seed)
         elif args.transfer == "kutil":
             from fourroom.sae_gate import build_sae_gate
             score_fn, tau0, _ = build_sae_gate(
@@ -289,7 +316,8 @@ def main() -> None:
             advlog_scenario=args.scenario)
         if args.transfer == "gap":
             strategy.student_policy = model.policy
-        if args.transfer in ("ksent", "ksdis", "kssucc", "ksentsucc"):
+        if args.transfer in ("ksent", "ksdis", "kssucc", "ksentsucc",
+                             "ksho"):
             strategy.student_policy = model.policy
             strategy.model = model
         print(f"[paper-student] guidance teacher: {teacher_path}")
